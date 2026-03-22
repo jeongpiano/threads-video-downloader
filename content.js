@@ -163,21 +163,23 @@
 
   function findContainer(el, isVideo) {
     if (isVideo) {
-      // For videos: go up until we're ABOVE the video element itself
-      // This prevents the button from being inside the video player's native controls
+      // For videos: keep going up until we're OUTSIDE the <video> element entirely.
+      // This ensures the button never overlaps the video player's native controls.
       let node = el.parentElement;
-      let prev = el;
-      for (let i = 0; i < 12 && node; i++) {
-        const r = node.getBoundingClientRect();
-        // Found a container bigger than the video element — use it
-        if (r.width > prev.getBoundingClientRect().width + 10 ||
-            r.height > prev.getBoundingClientRect().height + 10) {
+      for (let i = 0; i < 15 && node; i++) {
+        // Stop at known post/article boundaries — button goes in the post, not outside it
+        const tag = node.tagName;
+        const id = node.id || "";
+        if (tag === "ARTICLE" || tag === "SECTION" ||
+            /post|thread|item|entry|feed|story/i.test(id)) {
           return node;
         }
-        prev = node;
         node = node.parentElement;
       }
-      return el.parentElement?.parentElement || el.parentElement;
+      // Fallback: use a grandparent to get outside the video element
+      return el.parentElement?.parentElement?.parentElement ||
+             el.parentElement?.parentElement ||
+             el.parentElement;
     } else {
       // For images: standard traversal
       let node = el.parentElement;
