@@ -10,11 +10,13 @@
   pointer-events: auto;
 }
 
-/* Video button: top-right to avoid controls bar overlap */
+/* Video button: top-right, always visible (outside video player) */
 .tmd-wrap.tmd-video {
   right: 12px;
   top: 12px;
   bottom: auto;
+  opacity: 1 !important;
+  transform: translateY(0) !important;
 }
 
 /* Fully visible on hover or when active */

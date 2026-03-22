@@ -136,11 +136,11 @@
   }
 
   function scan() {
-    // Videos
+    // Videos — button goes on the OUTSIDE of the video player (avoids controls overlap)
     for (const video of document.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
-      const container = findContainer(video);
+      const container = findContainer(video, true);
       if (container) attachOverlay(container, video, "video");
     }
 
@@ -156,19 +156,38 @@
       if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
-      const container = findContainer(img);
+      const container = findContainer(img, false);
       if (container) attachOverlay(container, img, "image");
     }
   }
 
-  function findContainer(el) {
-    let node = el.parentElement;
-    for (let i = 0; i < 8 && node; i++) {
-      const r = node.getBoundingClientRect();
-      if (r.width >= 150 && r.height >= 150) return node;
-      node = node.parentElement;
+  function findContainer(el, isVideo) {
+    if (isVideo) {
+      // For videos: go up until we're ABOVE the video element itself
+      // This prevents the button from being inside the video player's native controls
+      let node = el.parentElement;
+      let prev = el;
+      for (let i = 0; i < 12 && node; i++) {
+        const r = node.getBoundingClientRect();
+        // Found a container bigger than the video element — use it
+        if (r.width > prev.getBoundingClientRect().width + 10 ||
+            r.height > prev.getBoundingClientRect().height + 10) {
+          return node;
+        }
+        prev = node;
+        node = node.parentElement;
+      }
+      return el.parentElement?.parentElement || el.parentElement;
+    } else {
+      // For images: standard traversal
+      let node = el.parentElement;
+      for (let i = 0; i < 8 && node; i++) {
+        const r = node.getBoundingClientRect();
+        if (r.width >= 150 && r.height >= 150) return node;
+        node = node.parentElement;
+      }
+      return el.parentElement;
     }
-    return el.parentElement;
   }
 
   // ── Overlay button with JS-based hover ──
