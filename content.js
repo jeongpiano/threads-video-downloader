@@ -1,0 +1,342 @@
+(() => {
+  "use strict";
+
+  const PROCESSED = "data-tmd";
+  const WRAP_CLASS = "tmd-wrap";
+  const BTN_CLASS = "tmd-btn";
+  const VISIBLE_CLASS = "tmd-visible";
+
+  // CDN domains used by Threads/Instagram
+  const CDN_PATTERN = /cdninstagram\.com|fbcdn\.net/;
+
+  let lastUrl = location.href;
+  let scanTimer = null;
+  let isNavigating = false;
+
+  init();
+
+  function init() {
+    extractVideoUrlsFromScripts();
+    scheduleScan();
+
+    // MutationObserver: DOM structure changes (covers React/Virtual DOM re-renders)
+    const obs = new MutationObserver(() => {
+      if (location.href !== lastUrl) {
+        onNavigate();
+      }
+      scheduleScan();
+    });
+    obs.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+
+    // History API: SPA navigation (pushState / replaceState)
+    const origPushState = history.pushState;
+    const origReplaceState = history.replaceState;
+    history.pushState = function (...args) {
+      const result = origPushState.apply(this, args);
+      if (location.href !== lastUrl) onNavigate();
+      return result;
+    };
+    history.replaceState = function (...args) {
+      const result = origReplaceState.apply(this, args);
+      if (location.href !== lastUrl) onNavigate();
+      return result;
+    };
+
+    // popstate: back/forward navigation
+    window.addEventListener("popstate", () => {
+      if (location.href !== lastUrl) onNavigate();
+    });
+  }
+
+  function onNavigate() {
+    if (isNavigating) return;
+    isNavigating = true;
+    lastUrl = location.href;
+
+    // Cancel any pending scan so cleanup + fresh scan run cleanly
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+
+    cleanup();
+
+    // Wait for React to finish rendering before extracting/scanning
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        extractVideoUrlsFromScripts();
+        scheduleScan();
+        isNavigating = false;
+      });
+    });
+  }
+
+  // ── SSR JSON parsing (video_versions / image_versions2) ──
+  function extractVideoUrlsFromScripts() {
+    const urls = [];
+    for (const script of document.querySelectorAll('script[type="application/json"]')) {
+      try {
+        findMediaUrls(JSON.parse(script.textContent), urls, 0);
+      } catch { /* skip */ }
+    }
+    if (urls.length) {
+      chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls: [...new Set(urls)] });
+    }
+  }
+
+  function findMediaUrls(obj, out, depth) {
+    if (depth > 20 || !obj || typeof obj !== "object") return;
+    // video
+    if (Array.isArray(obj.video_versions)) {
+      for (const v of obj.video_versions) if (v.url) out.push(v.url);
+      return;
+    }
+    if (typeof obj.video_url === "string") out.push(obj.video_url);
+    // image
+    if (obj.image_versions2?.candidates) {
+      for (const c of obj.image_versions2.candidates) if (c.url) out.push(c.url);
+      return;
+    }
+    for (const val of (Array.isArray(obj) ? obj : Object.values(obj))) {
+      findMediaUrls(val, out, depth + 1);
+    }
+  }
+
+  // ── DOM scan: attach buttons on images & videos ──
+  function scheduleScan() {
+    if (scanTimer) {
+      // Reschedule: new content may have arrived, push the timer out
+      clearTimeout(scanTimer);
+    }
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      scan();
+    }, 800);
+  }
+
+  function scan() {
+    // Videos
+    for (const video of document.querySelectorAll("video")) {
+      if (video.hasAttribute(PROCESSED)) continue;
+      video.setAttribute(PROCESSED, "video");
+      const container = findContainer(video);
+      if (container) attachOverlay(container, video, "video");
+    }
+
+    // Images – only large CDN images (skip avatars, icons)
+    for (const img of document.querySelectorAll("img")) {
+      if (img.hasAttribute(PROCESSED)) continue;
+      const src = img.src || img.currentSrc || "";
+      if (!src || !CDN_PATTERN.test(src)) continue;
+      // Skip small images (profile pics, icons)
+      const rect = img.getBoundingClientRect();
+      if (rect.width < 150 || rect.height < 150) continue;
+      // Skip profile pictures path
+      if (src.includes("/t51.2885-19/")) continue;
+
+      img.setAttribute(PROCESSED, "image");
+      const container = findContainer(img);
+      if (container) attachOverlay(container, img, "image");
+    }
+  }
+
+  function findContainer(el) {
+    let node = el.parentElement;
+    for (let i = 0; i < 8 && node; i++) {
+      const r = node.getBoundingClientRect();
+      if (r.width >= 150 && r.height >= 150) return node;
+      node = node.parentElement;
+    }
+    return el.parentElement;
+  }
+
+  // ── Overlay button with JS-based hover ──
+  function attachOverlay(container, mediaEl, mediaType) {
+    // Ensure positioning context
+    if (getComputedStyle(container).position === "static") {
+      container.style.position = "relative";
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = WRAP_CLASS;
+
+    const isVideo = mediaType === "video";
+    const label = isVideo ? "Video" : "Photo";
+    const icon = isVideo ? ICON_VIDEO_DL : ICON_IMG_DL;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = BTN_CLASS;
+    btn.innerHTML = `${icon}<span>${label}</span>`;
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (isVideo) {
+        downloadVideo(mediaEl, btn);
+      } else {
+        downloadImage(mediaEl, btn);
+      }
+    }, true);
+
+    wrap.appendChild(btn);
+    container.appendChild(wrap);
+
+    // JS-based hover: listen on both the media element and the container
+    // This is more reliable than pure CSS :hover on deeply nested React DOM
+    const show = () => wrap.classList.add(VISIBLE_CLASS);
+    const hide = () => {
+      // Small delay so user can move mouse to the button
+      setTimeout(() => {
+        if (!wrap.matches(":hover") && !container.matches(":hover")) {
+          wrap.classList.remove(VISIBLE_CLASS);
+        }
+      }, 200);
+    };
+
+    container.addEventListener("mouseenter", show);
+    container.addEventListener("mouseleave", hide);
+    mediaEl.addEventListener("mouseenter", show);
+    mediaEl.addEventListener("mouseleave", hide);
+    wrap.addEventListener("mouseenter", show);
+    wrap.addEventListener("mouseleave", hide);
+
+    // Also watch for src changes on video
+    if (isVideo) {
+      const srcObs = new MutationObserver(() => {
+        const s = mediaEl.currentSrc || mediaEl.src || "";
+        if (s && !s.startsWith("blob:")) {
+          chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls: [s] });
+        }
+      });
+      srcObs.observe(mediaEl, { attributes: true, attributeFilter: ["src"] });
+    }
+  }
+
+  // ── Download: Image ──
+  async function downloadImage(img, btn) {
+    const prev = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
+
+    // Get highest resolution: try srcset first, then src
+    let url = getBestImageUrl(img);
+    if (!url) {
+      showStatus(btn, prev, "No image found", 2000);
+      return;
+    }
+
+    const filename = buildFilename("jpg");
+    const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
+    if (resp?.ok) {
+      showStatus(btn, prev, `${ICON_CHECK}<span>Saved!</span>`, 2500);
+    } else {
+      showStatus(btn, prev, "<span>Failed</span>", 2000);
+    }
+  }
+
+  function getBestImageUrl(img) {
+    // Check srcset for highest resolution
+    const srcset = img.getAttribute("srcset");
+    if (srcset) {
+      const candidates = srcset.split(",").map((s) => {
+        const parts = s.trim().split(/\s+/);
+        const w = parseInt(parts[1]) || 0;
+        return { url: parts[0], w };
+      });
+      candidates.sort((a, b) => b.w - a.w);
+      if (candidates[0]?.url) return candidates[0].url;
+    }
+    return img.src || img.currentSrc || "";
+  }
+
+  // ── Download: Video (multi-strategy) ──
+  async function downloadVideo(video, btn) {
+    const prev = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
+
+    try {
+      let url = getNonBlobSrc(video);
+
+      // Fallback 1: captured network URLs
+      if (!url) {
+        const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
+        const urls = captured?.urls || [];
+        if (urls.length) url = urls[urls.length - 1];
+      }
+
+      // Fallback 2: embed endpoint
+      if (!url) {
+        const postUrl = location.href.split("?")[0];
+        const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
+        const urls = embed?.videoUrls || [];
+        if (urls.length) url = urls[0];
+      }
+
+      if (!url) {
+        showStatus(btn, prev, "No video found", 2500);
+        return;
+      }
+
+      const filename = buildFilename("mp4");
+      const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
+      if (resp?.ok) {
+        showStatus(btn, prev, `${ICON_CHECK}<span>Saved!</span>`, 2500);
+      } else {
+        showStatus(btn, prev, "<span>Failed</span>", 2500);
+      }
+    } catch (err) {
+      console.error("[TMD]", err);
+      showStatus(btn, prev, "<span>Error</span>", 2000);
+    }
+  }
+
+  function getNonBlobSrc(video) {
+    const src = video.currentSrc || video.src || "";
+    if (src && !src.startsWith("blob:")) return src;
+    const source = video.querySelector("source");
+    if (source) {
+      const s = source.src || source.getAttribute("src") || "";
+      if (s && !s.startsWith("blob:")) return s;
+    }
+    return "";
+  }
+
+  // ── Helpers ──
+  function buildFilename(ext) {
+    const parts = location.pathname.split("/").filter(Boolean);
+    const postIdx = parts.indexOf("post");
+    const postId = (postIdx !== -1 && parts[postIdx + 1]) ? parts[postIdx + 1] : "threads";
+    return `threads/${postId}_${Date.now()}.${ext}`;
+  }
+
+  function showStatus(btn, restoreHtml, html, delay) {
+    btn.innerHTML = html;
+    setTimeout(() => { btn.innerHTML = restoreHtml; btn.disabled = false; }, delay);
+  }
+
+  function sendMsg(msg) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(msg, (r) => {
+        resolve(chrome.runtime.lastError ? null : r);
+      });
+    });
+  }
+
+  function cleanup() {
+    // Remove all overlay wrappers
+    document.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
+    // Remove processed markers so elements are re-scanned on new page
+    document.querySelectorAll(`[${PROCESSED}]`).forEach((el) => el.removeAttribute(PROCESSED));
+    // Reset per-page timer state
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  }
+
+  // ── Inline SVG icons ──
+  const ICON_VIDEO_DL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+  const ICON_IMG_DL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
+  const ICON_CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const ICON_SPINNER = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="tmd-spin"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg>`;
+})();
