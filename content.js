@@ -13,34 +13,30 @@
   let scanTimer = null;
   let isNavigating = false;
 
-  // ── DEBUG: visible test marker (confirms script is running) ──
-  function showDebug(msg, videos, imgs) {
-    let el = document.getElementById("tmd-debug");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "tmd-debug";
-      Object.assign(el.style, {
-        position: "fixed", top: "0", left: "0", zIndex: "999999",
-        background: "#6C63FF", color: "#fff", padding: "8px 16px",
-        fontSize: "13px", fontFamily: "monospace", pointerEvents: "none",
-        lineHeight: "1.6"
-      });
-      (document.body || document.documentElement).appendChild(el);
-    }
-    el.textContent = `[TMD] ${msg} | videos:${videos} imgs:${imgs}`;
-  }
+  // ── DEBUG: visible test marker ──
+  const dbg = document.createElement("div");
+  dbg.id = "tmd-debug";
+  Object.assign(dbg.style, {
+    position: "fixed", top: "0", left: "0", zIndex: "999999",
+    background: "#6C63FF", color: "#fff", padding: "6px 12px",
+    fontSize: "12px", fontFamily: "monospace", pointerEvents: "none"
+  });
+  (document.body || document.documentElement).appendChild(dbg);
+  function setDebug(msg) { dbg.textContent = `[TMD] ${msg}`; }
+  setDebug("loading…");
+
+  init();
 
   function init() {
-    const videos = document.querySelectorAll("video").length;
-    const imgs = document.querySelectorAll("img").length;
-    showDebug("init", videos, imgs);
-    injectStyles();
+    setDebug("init");
     extractVideoUrlsFromScripts();
     scheduleScan();
 
     // MutationObserver: DOM structure changes (covers React/Virtual DOM re-renders)
     const obs = new MutationObserver(() => {
-      if (location.href !== lastUrl) onNavigate();
+      if (location.href !== lastUrl) {
+        onNavigate();
+      }
       scheduleScan();
     });
     obs.observe(document.body || document.documentElement, {
@@ -48,7 +44,7 @@
       subtree: true
     });
 
-    // History API: SPA navigation
+    // History API: SPA navigation (pushState / replaceState)
     const origPushState = history.pushState;
     const origReplaceState = history.replaceState;
     history.pushState = function (...args) {
@@ -61,6 +57,8 @@
       if (location.href !== lastUrl) onNavigate();
       return result;
     };
+
+    // popstate: back/forward navigation
     window.addEventListener("popstate", () => {
       if (location.href !== lastUrl) onNavigate();
     });
@@ -101,9 +99,7 @@
       const urls = media.map((m) => m.url);
       const thumbnails = {};
       media.forEach((m) => { if (m.thumb) thumbnails[m.url] = m.thumb; });
-      try {
-        chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls, thumbnails });
-      } catch (_) {}
+      try { chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls, thumbnails }); } catch (_) {}
     }
   }
 
@@ -153,15 +149,14 @@
   }
 
   function scan() {
-    const videos = document.querySelectorAll("video");
-    const imgs = document.querySelectorAll("img");
-    console.log("[TMD] scan: videos=", videos.length, "imgs=", imgs.length);
-
+    const vs = document.querySelectorAll("video").length;
+    const imgs = document.querySelectorAll("img").length;
+    setDebug(`scan v:${vs} i:${imgs}`);
     // Videos
-    for (const video of videos) {
+    for (const video of document.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
-      const container = findContainer(video, true);
+      const container = findContainer(video);
       if (container) attachOverlay(container, video, "video");
     }
 
@@ -177,16 +172,12 @@
       if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
-      const container = findContainer(img, false);
+      const container = findContainer(img);
       if (container) attachOverlay(container, img, "image");
     }
   }
 
-  function findContainer(el, isVideo) {
-    // For videos: always use the video element itself as container
-    // (CSS will position the button at top-right OUTSIDE the video content area)
-    if (isVideo) return el;
-    // For images: standard traversal
+  function findContainer(el) {
     let node = el.parentElement;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
@@ -198,19 +189,12 @@
 
   // ── Overlay button with JS-based hover ──
   function attachOverlay(container, mediaEl, mediaType) {
-    const isVideo = mediaType === "video";
-
-    // For videos: make the video element positionable (it IS the container)
-    if (isVideo) {
-      if (getComputedStyle(mediaEl).position === "static") {
-        mediaEl.style.position = "relative";
-      }
-    } else {
-      if (getComputedStyle(container).position === "static") {
-        container.style.position = "relative";
-      }
+    // Ensure positioning context
+    if (getComputedStyle(container).position === "static") {
+      container.style.position = "relative";
     }
 
+    const isVideo = mediaType === "video";
     const wrap = document.createElement("div");
     wrap.className = WRAP_CLASS + (isVideo ? " tmd-video" : "");
 
@@ -219,31 +203,8 @@
 
     const btn = document.createElement("button");
     btn.type = "button";
-    // Apply inline styles directly — no CSS class dependency
-    const posStyle = isVideo
-      ? "position:absolute;right:10px;top:10px;z-index:2147483647;opacity:1"
-      : "position:absolute;right:10px;bottom:10px;z-index:2147483647;opacity:0.5";
-    wrap.setAttribute("style", posStyle);
-
-    btn.setAttribute("style", [
-      "display:inline-flex",
-      "align-items:center",
-      "gap:6px",
-      "padding:8px 14px",
-      "border:none",
-      "border-radius:20px",
-      "background:rgba(0,0,0,0.78)",
-      "color:#fff",
-      "font-size:13px",
-      "font-weight:600",
-      "font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif",
-      "cursor:pointer",
-      "backdrop-filter:blur(10px)",
-      "box-shadow:0 2px 16px rgba(0,0,0,0.35)",
-      "white-space:nowrap",
-      "user-select:none",
-      "pointer-events:auto"
-    ].join(";"));
+    btn.className = BTN_CLASS;
+    btn.innerHTML = `${icon}<span>${label}</span>`;
 
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -254,18 +215,29 @@
       } else {
         downloadImage(mediaEl, btn);
       }
-    });
-
-    // Hover effect: adjust opacity
-    mediaEl.addEventListener("mouseenter", () => {
-      if (!isVideo) wrap.setAttribute("style", posStyle + ";opacity:1");
-    });
-    mediaEl.addEventListener("mouseleave", () => {
-      if (!isVideo) wrap.setAttribute("style", posStyle);
-    });
+    }, true);
 
     wrap.appendChild(btn);
     container.appendChild(wrap);
+
+    // JS-based hover: listen on both the media element and the container
+    // This is more reliable than pure CSS :hover on deeply nested React DOM
+    const show = () => wrap.classList.add(VISIBLE_CLASS);
+    const hide = () => {
+      // Small delay so user can move mouse to the button
+      setTimeout(() => {
+        if (!wrap.matches(":hover") && !container.matches(":hover")) {
+          wrap.classList.remove(VISIBLE_CLASS);
+        }
+      }, 200);
+    };
+
+    container.addEventListener("mouseenter", show);
+    container.addEventListener("mouseleave", hide);
+    mediaEl.addEventListener("mouseenter", show);
+    mediaEl.addEventListener("mouseleave", hide);
+    wrap.addEventListener("mouseenter", show);
+    wrap.addEventListener("mouseleave", hide);
 
     // Also watch for src changes on video — capture poster thumbnail too
     if (isVideo) {
@@ -328,29 +300,19 @@
     try {
       let url = "";
 
-      // Strategy 1 (primary): video element's src — specific to THIS video
-      url = getNonBlobSrc(video);
-
-      // Strategy 2: look in parent article/post data for direct URL
-      if (!url) {
-        url = findVideoUrlInPost(video);
+      // Strategy 1 (primary): network-captured CDN URLs — most reliable
+      const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
+      const capturedUrls = captured?.urls || [];
+      if (capturedUrls.length) {
+        url = capturedUrls[capturedUrls.length - 1]; // highest quality
       }
 
-      // Strategy 3: from SSR JSON scripts near this video
+      // Strategy 2: video element's currentSrc (if not blob)
       if (!url) {
-        url = findVideoUrlFromScriptsNear(video);
+        url = getNonBlobSrc(video);
       }
 
-      // Strategy 4: network-captured CDN URLs — fall back only if no direct URL found
-      if (!url) {
-        const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
-        const capturedUrls = captured?.urls || [];
-        if (capturedUrls.length) {
-          url = capturedUrls[capturedUrls.length - 1];
-        }
-      }
-
-      // Strategy 5: embed endpoint fallback
+      // Strategy 3: embed endpoint fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
@@ -374,49 +336,6 @@
       console.error("[TMD]", err);
       showStatus(btn, prev, "<span>Error</span>", 2000);
     }
-  }
-
-  // ── Find video URL from parent article/post element ──
-  function findVideoUrlInPost(video) {
-    // Walk up from the video to find a post/article container
-    let node = video;
-    for (let i = 0; i < 10 && node; i++) {
-      const url = node.dataset?.videoUrl || node.dataset?.video_url;
-      if (url && !url.startsWith("blob:") && (url.includes(".mp4") || url.includes("/v/"))) {
-        return url;
-      }
-      node = node.parentElement;
-    }
-    // Try: find adjacent JSON script in parent tree
-    return "";
-  }
-
-  // ── Find video URL from SSR JSON near the video element ──
-  function findVideoUrlFromScriptsNear(video) {
-    // Find the post/article container
-    let postNode = video;
-    for (let i = 0; i < 10 && postNode; i++) {
-      if (postNode.tagName === "ARTICLE" || postNode.tagName === "SECTION" ||
-          (postNode.id && /post|thread|item|entry/i.test(postNode.id))) {
-        break;
-      }
-      postNode = postNode.parentElement;
-    }
-    if (!postNode) return "";
-
-    // Look for JSON scripts inside or near this post
-    const scripts = postNode.querySelectorAll ? postNode.querySelectorAll('script[type="application/json"]') : [];
-    for (const script of scripts) {
-      try {
-        const urls = [];
-        findMediaUrls(JSON.parse(script.textContent), urls, 0);
-        // Return first video URL found in this post's scripts
-        for (const item of urls) {
-          if (item.type === "video" && item.url) return item.url;
-        }
-      } catch {}
-    }
-    return "";
   }
 
   function getNonBlobSrc(video) {
@@ -445,14 +364,9 @@
 
   function sendMsg(msg) {
     return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage(msg, (r) => {
-          resolve(chrome.runtime.lastError ? null : r);
-        });
-      } catch (e) {
-        // Service worker may be unavailable or restarting
-        resolve(null);
-      }
+      chrome.runtime.sendMessage(msg, (r) => {
+        resolve(chrome.runtime.lastError ? null : r);
+      });
     });
   }
 
@@ -470,20 +384,4 @@
   const ICON_IMG_DL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
   const ICON_CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
   const ICON_SPINNER = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="tmd-spin"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg>`;
-
-  // Inject styles helper (defined before init but called from init)
-  function injectStyles() {
-    if (document.getElementById("tmd-styles")) return;
-    const css = `
-      .tmd-wrap { pointer-events: none !important; }
-      .tmd-wrap .tmd-btn { pointer-events: auto !important; }
-      @keyframes tmd-spin { to { transform: rotate(360deg); } }
-    `;
-    const el = document.createElement("style");
-    el.id = "tmd-styles";
-    el.textContent = css;
-    (document.head || document.documentElement).appendChild(el);
-  }
-
-  init();
 })();
