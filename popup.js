@@ -8,19 +8,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     return;
   }
 
-  // ── Collect media from all sources ──
+  // ── Collect media from CURRENT PAGE ONLY ──
+  // Primary source: live DOM scan (always current page)
   const videoSet = new Set();
   const imageSet = new Set();
-
-  // Source 1: Network-captured URLs
-  try {
-    const r = await chrome.runtime.sendMessage({ type: "GET_CAPTURED_URLS", tabId: tab.id });
-    (r?.urls || []).forEach((u) => videoSet.add(u));
-    (r?.imageUrls || []).forEach((u) => imageSet.add(u));
-  } catch {}
-
-  // Source 2: Scan page SSR JSON + DOM (includes thumbnails)
   let pageThumbnails = {};
+
+  // Scan current page DOM — this is the source of truth for current page
   try {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -29,12 +23,30 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (result?.result) {
       result.result.videos.forEach((u) => videoSet.add(u));
       result.result.images.forEach((u) => imageSet.add(u));
-      // Merge thumbnails: url -> thumbnailUrl
       Object.assign(pageThumbnails, result.result.thumbnails || {});
     }
+  } catch (e) {
+    status.textContent = "페이지 스캔 실패. 새로고침 후 다시 시도해주세요.";
+    return;
+  }
+
+  // Supplement: network-captured URLs for THIS page only
+  // Filter: only include URLs that match the current page's post/user context
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "GET_CAPTURED_URLS", tabId: tab.id });
+    const currentPagePrefix = extractPostId(tab.url);
+    (r?.urls || []).forEach((u) => {
+      // Only add if it's a high-quality video URL (not ad/related content)
+      if (u.includes(".mp4") || u.includes("/v/t16/")) {
+        videoSet.add(u);
+      }
+    });
+    (r?.imageUrls || []).forEach((u) => {
+      if (!u.includes("/t51.2885-19/")) imageSet.add(u);
+    });
   } catch {}
 
-  // Source 3: Embed fallback (videos only)
+  // Final fallback: embed endpoint (only if nothing found)
   if (videoSet.size === 0) {
     try {
       const postUrl = tab.url.split("?")[0];
