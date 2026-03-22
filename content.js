@@ -13,7 +13,7 @@
   let scanTimer = null;
   let isNavigating = false;
 
-  // ── DEBUG: visible test marker ──
+  // ── DEBUG: visible marker ──
   const dbg = document.createElement("div");
   dbg.id = "tmd-debug";
   Object.assign(dbg.style, {
@@ -149,14 +149,12 @@
   }
 
   function scan() {
-    const vs = document.querySelectorAll("video").length;
-    const imgs = document.querySelectorAll("img").length;
-    setDebug(`scan v:${vs} i:${imgs}`);
-    // Videos
+    setDebug(`scan v:${document.querySelectorAll("video").length} i:${document.querySelectorAll("img").length}`);
+    // Videos — button goes on the OUTSIDE of the video player (avoids controls overlap)
     for (const video of document.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
-      const container = findContainer(video);
+      const container = findContainer(video, true);
       if (container) attachOverlay(container, video, "video");
     }
 
@@ -172,12 +170,16 @@
       if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
-      const container = findContainer(img);
+      const container = findContainer(img, false);
       if (container) attachOverlay(container, img, "image");
     }
   }
 
-  function findContainer(el) {
+  function findContainer(el, isVideo) {
+    // For videos: always use the video element itself as container
+    // (CSS will position the button at top-right OUTSIDE the video content area)
+    if (isVideo) return el;
+    // For images: standard traversal
     let node = el.parentElement;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
@@ -189,12 +191,19 @@
 
   // ── Overlay button with JS-based hover ──
   function attachOverlay(container, mediaEl, mediaType) {
-    // Ensure positioning context
-    if (getComputedStyle(container).position === "static") {
-      container.style.position = "relative";
+    const isVideo = mediaType === "video";
+
+    // For videos: make the video element positionable (it IS the container)
+    if (isVideo) {
+      if (getComputedStyle(mediaEl).position === "static") {
+        mediaEl.style.position = "relative";
+      }
+    } else {
+      if (getComputedStyle(container).position === "static") {
+        container.style.position = "relative";
+      }
     }
 
-    const isVideo = mediaType === "video";
     const wrap = document.createElement("div");
     wrap.className = WRAP_CLASS + (isVideo ? " tmd-video" : "");
 
@@ -215,25 +224,21 @@
       } else {
         downloadImage(mediaEl, btn);
       }
-    }, true);
+    });
 
     wrap.appendChild(btn);
     container.appendChild(wrap);
 
     // JS-based hover: listen on both the media element and the container
-    // This is more reliable than pure CSS :hover on deeply nested React DOM
     const show = () => wrap.classList.add(VISIBLE_CLASS);
     const hide = () => {
-      // Small delay so user can move mouse to the button
       setTimeout(() => {
-        if (!wrap.matches(":hover") && !container.matches(":hover")) {
+        if (!wrap.matches(":hover") && !mediaEl.matches(":hover")) {
           wrap.classList.remove(VISIBLE_CLASS);
         }
       }, 200);
     };
 
-    container.addEventListener("mouseenter", show);
-    container.addEventListener("mouseleave", hide);
     mediaEl.addEventListener("mouseenter", show);
     mediaEl.addEventListener("mouseleave", hide);
     wrap.addEventListener("mouseenter", show);
@@ -300,19 +305,29 @@
     try {
       let url = "";
 
-      // Strategy 1 (primary): network-captured CDN URLs — most reliable
-      const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
-      const capturedUrls = captured?.urls || [];
-      if (capturedUrls.length) {
-        url = capturedUrls[capturedUrls.length - 1]; // highest quality
-      }
+      // Strategy 1 (primary): video element's src — specific to THIS video
+      url = getNonBlobSrc(video);
 
-      // Strategy 2: video element's currentSrc (if not blob)
+      // Strategy 2: look in parent article/post data for direct URL
       if (!url) {
-        url = getNonBlobSrc(video);
+        url = findVideoUrlInPost(video);
       }
 
-      // Strategy 3: embed endpoint fallback
+      // Strategy 3: from SSR JSON scripts near this video
+      if (!url) {
+        url = findVideoUrlFromScriptsNear(video);
+      }
+
+      // Strategy 4: network-captured CDN URLs — fall back only if no direct URL found
+      if (!url) {
+        const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
+        const capturedUrls = captured?.urls || [];
+        if (capturedUrls.length) {
+          url = capturedUrls[capturedUrls.length - 1];
+        }
+      }
+
+      // Strategy 5: embed endpoint fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
@@ -336,6 +351,49 @@
       console.error("[TMD]", err);
       showStatus(btn, prev, "<span>Error</span>", 2000);
     }
+  }
+
+  // ── Find video URL from parent article/post element ──
+  function findVideoUrlInPost(video) {
+    // Walk up from the video to find a post/article container
+    let node = video;
+    for (let i = 0; i < 10 && node; i++) {
+      const url = node.dataset?.videoUrl || node.dataset?.video_url;
+      if (url && !url.startsWith("blob:") && (url.includes(".mp4") || url.includes("/v/"))) {
+        return url;
+      }
+      node = node.parentElement;
+    }
+    // Try: find adjacent JSON script in parent tree
+    return "";
+  }
+
+  // ── Find video URL from SSR JSON near the video element ──
+  function findVideoUrlFromScriptsNear(video) {
+    // Find the post/article container
+    let postNode = video;
+    for (let i = 0; i < 10 && postNode; i++) {
+      if (postNode.tagName === "ARTICLE" || postNode.tagName === "SECTION" ||
+          (postNode.id && /post|thread|item|entry/i.test(postNode.id))) {
+        break;
+      }
+      postNode = postNode.parentElement;
+    }
+    if (!postNode) return "";
+
+    // Look for JSON scripts inside or near this post
+    const scripts = postNode.querySelectorAll ? postNode.querySelectorAll('script[type="application/json"]') : [];
+    for (const script of scripts) {
+      try {
+        const urls = [];
+        findMediaUrls(JSON.parse(script.textContent), urls, 0);
+        // Return first video URL found in this post's scripts
+        for (const item of urls) {
+          if (item.type === "video" && item.url) return item.url;
+        }
+      } catch {}
+    }
+    return "";
   }
 
   function getNonBlobSrc(video) {

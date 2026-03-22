@@ -1,25 +1,26 @@
-/* ── Button wrapper: pointer-events fix — wrap click-through, button clickable ── */
+/* ── Button wrapper ── */
 .tmd-wrap {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  right: 10px;
+  bottom: 10px;
   z-index: 2147483647;
-  opacity: 0.45;
+  opacity: 0;
   transform: translateY(4px);
   transition: opacity 180ms ease, transform 180ms ease;
   pointer-events: none;
 }
 
-/* Video button: top-right to avoid controls bar overlap */
+/* Video button: top-right, always visible (on the video element itself) */
 .tmd-wrap.tmd-video {
-  right: 12px;
-  top: 12px;
+  right: 10px;
+  top: 10px;
   bottom: auto;
   opacity: 1;
   transform: translateY(0);
+  /* Video element is the container, so button sits on top at corner */
 }
 
-/* Fully visible on hover or when active */
+/* Fully visible on hover */
 .tmd-wrap:hover,
 .tmd-wrap.tmd-visible {
   opacity: 1;
@@ -31,11 +32,10 @@
   pointer-events: auto;
 }
 
-/* Always visible while downloading/showing status */
+/* Keep button visible while downloading/showing status */
 .tmd-wrap:has(button:disabled) {
   opacity: 1 !important;
   transform: translateY(0) !important;
-  pointer-events: none !important;
 }
 
 /* ── Download button ── */
