@@ -1,20 +1,20 @@
-/* ── Button wrapper: hidden by default, shown via JS ── */
+/* ── Button wrapper: always visible (desktop hover / mobile touch) ── */
 .tmd-wrap {
   position: absolute;
   right: 12px;
   bottom: 12px;
   z-index: 2147483647;
-  opacity: 0;
+  opacity: 0.45;
   transform: translateY(4px);
   transition: opacity 180ms ease, transform 180ms ease;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
-/* Visible state (toggled by JS mouseenter/mouseleave) */
+/* Fully visible on hover or when active */
+.tmd-wrap:hover,
 .tmd-wrap.tmd-visible {
   opacity: 1;
   transform: translateY(0);
-  pointer-events: auto;
 }
 
 /* Always visible while downloading/showing status */

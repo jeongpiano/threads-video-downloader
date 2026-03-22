@@ -19,7 +19,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     (r?.imageUrls || []).forEach((u) => imageSet.add(u));
   } catch {}
 
-  // Source 2: Scan page SSR JSON + DOM
+  // Source 2: Scan page SSR JSON + DOM (includes thumbnails)
+  let pageThumbnails = {};
   try {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -28,6 +29,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (result?.result) {
       result.result.videos.forEach((u) => videoSet.add(u));
       result.result.images.forEach((u) => imageSet.add(u));
+      // Merge thumbnails: url -> thumbnailUrl
+      Object.assign(pageThumbnails, result.result.thumbnails || {});
     }
   } catch {}
 
@@ -60,7 +63,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     html += `<div class="section-title">Videos (${videos.length})</div>`;
     html += `<ul class="media-list">`;
     videos.forEach((url, i) => {
-      html += mediaItem(url, i, "video", `Video ${i + 1}`);
+      const thumb = pageThumbnails[url] || null;
+      html += mediaItem(url, i, "video", `Video ${i + 1}`, thumb);
     });
     html += `</ul>`;
   }
@@ -70,7 +74,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     html += `<div class="section-title">Photos (${images.length})</div>`;
     html += `<ul class="media-list">`;
     images.forEach((url, i) => {
-      html += mediaItem(url, videos.length + i, "photo", `Photo ${i + 1}`);
+      const thumb = pageThumbnails[url] || url; // image URL itself is the thumbnail
+      html += mediaItem(url, videos.length + i, "photo", `Photo ${i + 1}`, thumb);
     });
     html += `</ul>`;
   }
@@ -83,10 +88,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   content.innerHTML = html;
 
-  // All media URLs in order
+  // All media URLs + thumbnails in order
   const allMedia = [
-    ...videos.map((u) => ({ url: u, ext: "mp4" })),
-    ...images.map((u) => ({ url: u, ext: "jpg" }))
+    ...videos.map((u) => ({ url: u, ext: "mp4", thumb: pageThumbnails[u] || null })),
+    ...images.map((u) => ({ url: u, ext: "jpg", thumb: u }))
   ];
 
   // Individual buttons
@@ -124,12 +129,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 });
 
-function mediaItem(url, idx, type, label) {
+function mediaItem(url, idx, type, label, thumbUrl) {
   const short = shortUrl(url);
   const typeClass = type === "video" ? "type-video" : "type-photo";
   const typeLabel = type === "video" ? "MP4" : "JPG";
+
+  let thumbHtml;
+  if (thumbUrl) {
+    if (type === "video") {
+      // Video thumbnail: use <video> element with poster
+      thumbHtml = `<video muted playsinline src="${esc(thumbUrl)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"></video><div class="thumb-placeholder" style="display:none"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>`;
+    } else {
+      // Image thumbnail: use <img>
+      thumbHtml = `<img src="${esc(thumbUrl)}" alt="${label}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2252%22 height=%2252%22><rect fill=%22%23f0f0f0%22 width=%2252%22 height=%2252%22 rx=%228%22/></svg>'">`;
+    }
+  } else {
+    // No thumbnail: show placeholder
+    const icon = type === "video"
+      ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`
+      : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
+    thumbHtml = `<div class="thumb-placeholder">${icon}</div>`;
+  }
+
   return `
     <li class="media-item">
+      <div class="media-thumb">${thumbHtml}</div>
       <div class="media-info">
         <span class="media-type ${typeClass}">${typeLabel}</span>
         <span style="font-size:13px;font-weight:600;margin-left:4px">${label}</span>
@@ -148,18 +172,26 @@ function shortUrl(url) {
 function scanPage() {
   const videos = [];
   const images = [];
+  const thumbnails = {}; // mediaUrl -> thumbnailUrl
 
   // SSR JSON
   for (const s of document.querySelectorAll('script[type="application/json"]')) {
     try { dig(JSON.parse(s.textContent), 0); } catch {}
   }
 
-  // DOM video elements
+  // DOM video elements — capture src + poster
   for (const v of document.querySelectorAll("video")) {
     const src = v.currentSrc || v.src || "";
-    if (src && !src.startsWith("blob:")) videos.push(src);
+    if (src && !src.startsWith("blob:")) {
+      videos.push(src);
+      // Use video element's poster as thumbnail if available
+      if (v.poster) thumbnails[src] = v.poster;
+    }
     const source = v.querySelector("source");
-    if (source?.src && !source.src.startsWith("blob:")) videos.push(source.src);
+    if (source?.src && !source.src.startsWith("blob:")) {
+      videos.push(source.src);
+      if (v.poster) thumbnails[source.src] = v.poster;
+    }
   }
 
   // DOM img elements (CDN only, large)
@@ -171,7 +203,7 @@ function scanPage() {
     if (r.width >= 150 && r.height >= 150) images.push(src);
   }
 
-  return { videos: [...new Set(videos)], images: [...new Set(images)] };
+  return { videos: [...new Set(videos)], images: [...new Set(images)], thumbnails };
 
   function dig(obj, d) {
     if (d > 20 || !obj || typeof obj !== "object") return;
