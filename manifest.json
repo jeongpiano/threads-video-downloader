@@ -16,6 +16,8 @@
   ],
   "host_permissions": [
     "https://www.threads.com/*",
+    "https://threads.com/*",
+    "https://*.threads.com/*",
     "https://*.cdninstagram.com/*",
     "https://*.fbcdn.net/*"
   ],
@@ -32,7 +34,9 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.threads.com/*"
+        "https://www.threads.com/*",
+        "https://threads.com/*",
+        "https://*.threads.com/*"
       ],
       "js": [
         "content.js"

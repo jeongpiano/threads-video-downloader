@@ -13,32 +13,34 @@
   let scanTimer = null;
   let isNavigating = false;
 
-  init();
-
-  // Inject styles directly into the page
-  function injectStyles() {
-    if (document.getElementById("tmd-styles")) return;
-    const css = `
-      .tmd-wrap { pointer-events: none !important; }
-      .tmd-wrap .tmd-btn { pointer-events: auto !important; }
-      @keyframes tmd-spin { to { transform: rotate(360deg); } }
-    `;
-    const el = document.createElement("style");
-    el.id = "tmd-styles";
-    el.textContent = css;
-    (document.head || document.documentElement).appendChild(el);
+  // ── DEBUG: visible test marker (confirms script is running) ──
+  function showDebug(msg, videos, imgs) {
+    let el = document.getElementById("tmd-debug");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "tmd-debug";
+      Object.assign(el.style, {
+        position: "fixed", top: "0", left: "0", zIndex: "999999",
+        background: "#6C63FF", color: "#fff", padding: "8px 16px",
+        fontSize: "13px", fontFamily: "monospace", pointerEvents: "none",
+        lineHeight: "1.6"
+      });
+      (document.body || document.documentElement).appendChild(el);
+    }
+    el.textContent = `[TMD] ${msg} | videos:${videos} imgs:${imgs}`;
   }
 
   function init() {
+    const videos = document.querySelectorAll("video").length;
+    const imgs = document.querySelectorAll("img").length;
+    showDebug("init", videos, imgs);
     injectStyles();
     extractVideoUrlsFromScripts();
     scheduleScan();
 
     // MutationObserver: DOM structure changes (covers React/Virtual DOM re-renders)
     const obs = new MutationObserver(() => {
-      if (location.href !== lastUrl) {
-        onNavigate();
-      }
+      if (location.href !== lastUrl) onNavigate();
       scheduleScan();
     });
     obs.observe(document.body || document.documentElement, {
@@ -46,7 +48,7 @@
       subtree: true
     });
 
-    // History API: SPA navigation (pushState / replaceState)
+    // History API: SPA navigation
     const origPushState = history.pushState;
     const origReplaceState = history.replaceState;
     history.pushState = function (...args) {
@@ -59,8 +61,6 @@
       if (location.href !== lastUrl) onNavigate();
       return result;
     };
-
-    // popstate: back/forward navigation
     window.addEventListener("popstate", () => {
       if (location.href !== lastUrl) onNavigate();
     });
@@ -470,4 +470,20 @@
   const ICON_IMG_DL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
   const ICON_CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
   const ICON_SPINNER = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="tmd-spin"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg>`;
+
+  // Inject styles helper (defined before init but called from init)
+  function injectStyles() {
+    if (document.getElementById("tmd-styles")) return;
+    const css = `
+      .tmd-wrap { pointer-events: none !important; }
+      .tmd-wrap .tmd-btn { pointer-events: auto !important; }
+      @keyframes tmd-spin { to { transform: rotate(360deg); } }
+    `;
+    const el = document.createElement("style");
+    el.id = "tmd-styles";
+    el.textContent = css;
+    (document.head || document.documentElement).appendChild(el);
+  }
+
+  init();
 })();
