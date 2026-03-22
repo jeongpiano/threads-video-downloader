@@ -218,7 +218,7 @@
       } else {
         downloadImage(mediaEl, btn);
       }
-    }, true);
+    });
 
     wrap.appendChild(btn);
     container.appendChild(wrap);
