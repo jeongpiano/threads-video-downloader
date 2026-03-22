@@ -303,19 +303,29 @@
     try {
       let url = "";
 
-      // Strategy 1 (primary): network-captured CDN URLs — most reliable
-      const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
-      const capturedUrls = captured?.urls || [];
-      if (capturedUrls.length) {
-        url = capturedUrls[capturedUrls.length - 1]; // highest quality
-      }
+      // Strategy 1 (primary): video element's src — specific to THIS video
+      url = getNonBlobSrc(video);
 
-      // Strategy 2: video element's currentSrc (if not blob)
+      // Strategy 2: look in parent article/post data for direct URL
       if (!url) {
-        url = getNonBlobSrc(video);
+        url = findVideoUrlInPost(video);
       }
 
-      // Strategy 3: embed endpoint fallback
+      // Strategy 3: from SSR JSON scripts near this video
+      if (!url) {
+        url = findVideoUrlFromScriptsNear(video);
+      }
+
+      // Strategy 4: network-captured CDN URLs — fall back only if no direct URL found
+      if (!url) {
+        const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
+        const capturedUrls = captured?.urls || [];
+        if (capturedUrls.length) {
+          url = capturedUrls[capturedUrls.length - 1];
+        }
+      }
+
+      // Strategy 5: embed endpoint fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
@@ -339,6 +349,49 @@
       console.error("[TMD]", err);
       showStatus(btn, prev, "<span>Error</span>", 2000);
     }
+  }
+
+  // ── Find video URL from parent article/post element ──
+  function findVideoUrlInPost(video) {
+    // Walk up from the video to find a post/article container
+    let node = video;
+    for (let i = 0; i < 10 && node; i++) {
+      const url = node.dataset?.videoUrl || node.dataset?.video_url;
+      if (url && !url.startsWith("blob:") && (url.includes(".mp4") || url.includes("/v/"))) {
+        return url;
+      }
+      node = node.parentElement;
+    }
+    // Try: find adjacent JSON script in parent tree
+    return "";
+  }
+
+  // ── Find video URL from SSR JSON near the video element ──
+  function findVideoUrlFromScriptsNear(video) {
+    // Find the post/article container
+    let postNode = video;
+    for (let i = 0; i < 10 && postNode; i++) {
+      if (postNode.tagName === "ARTICLE" || postNode.tagName === "SECTION" ||
+          (postNode.id && /post|thread|item|entry/i.test(postNode.id))) {
+        break;
+      }
+      postNode = postNode.parentElement;
+    }
+    if (!postNode) return "";
+
+    // Look for JSON scripts inside or near this post
+    const scripts = postNode.querySelectorAll ? postNode.querySelectorAll('script[type="application/json"]') : [];
+    for (const script of scripts) {
+      try {
+        const urls = [];
+        findMediaUrls(JSON.parse(script.textContent), urls, 0);
+        // Return first video URL found in this post's scripts
+        for (const item of urls) {
+          if (item.type === "video" && item.url) return item.url;
+        }
+      } catch {}
+    }
+    return "";
   }
 
   function getNonBlobSrc(video) {
