@@ -15,7 +15,82 @@
 
   init();
 
+  // Inject styles directly into the page to ensure they always load
+  function injectStyles() {
+    if (document.getElementById("tmd-styles")) return;
+    const css = `
+      .tmd-wrap {
+        position: absolute !important;
+        right: 10px !important;
+        bottom: 10px !important;
+        top: auto !important;
+        z-index: 2147483647 !important;
+        opacity: 0;
+        transform: translateY(4px) !important;
+        transition: opacity 180ms ease, transform 180ms ease;
+        pointer-events: none;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      .tmd-wrap.tmd-video {
+        right: 10px !important;
+        top: 10px !important;
+        bottom: auto !important;
+        opacity: 1 !important;
+        transform: none !important;
+      }
+      .tmd-wrap:hover,
+      .tmd-wrap.tmd-visible {
+        opacity: 1 !important;
+        transform: none !important;
+      }
+      .tmd-wrap .tmd-btn {
+        pointer-events: auto !important;
+        position: relative !important;
+        z-index: 1 !important;
+      }
+      .tmd-wrap:has(button:disabled) {
+        opacity: 1 !important;
+        transform: none !important;
+      }
+      .tmd-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 8px 14px !important;
+        border: none !important;
+        border-radius: 20px !important;
+        background: rgba(0, 0, 0, 0.78) !important;
+        color: #fff !important;
+        font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        cursor: pointer !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35) !important;
+        transition: background 150ms ease, transform 120ms ease !important;
+        white-space: nowrap !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
+      }
+      .tmd-btn:hover {
+        background: rgba(0, 0, 0, 0.92) !important;
+        transform: scale(1.05) !important;
+      }
+      .tmd-btn:active { transform: scale(0.96) !important; }
+      .tmd-btn:disabled { cursor: wait !important; opacity: 0.8 !important; }
+      .tmd-btn svg { flex-shrink: 0 !important; }
+      @keyframes tmd-spin { to { transform: rotate(360deg); } }
+      .tmd-spin { animation: tmd-spin 0.7s linear infinite; }
+    `;
+    const el = document.createElement("style");
+    el.id = "tmd-styles";
+    el.textContent = css;
+    (document.head || document.documentElement).appendChild(el);
+  }
+
   function init() {
+    injectStyles();
     extractVideoUrlsFromScripts();
     scheduleScan();
 
