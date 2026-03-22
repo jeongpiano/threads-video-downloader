@@ -72,15 +72,21 @@
   }
 
   // ── SSR JSON parsing (video_versions / image_versions2) ──
+  // Extracts URLs + thumbnail + viewport position → sent to popup for ordered display
   function extractVideoUrlsFromScripts() {
-    const urls = [];
+    const media = []; // { url, type, thumb, y }
     for (const script of document.querySelectorAll('script[type="application/json"]')) {
       try {
-        findMediaUrls(JSON.parse(script.textContent), urls, 0);
+        findMediaUrls(JSON.parse(script.textContent), media, 0);
       } catch { /* skip */ }
     }
-    if (urls.length) {
-      chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls: [...new Set(urls)] });
+    if (media.length) {
+      // Sort by viewport position (top to bottom)
+      media.sort((a, b) => a.y - b.y);
+      const urls = media.map((m) => m.url);
+      const thumbnails = {};
+      media.forEach((m) => { if (m.thumb) thumbnails[m.url] = m.thumb; });
+      chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls, thumbnails });
     }
   }
 
@@ -88,13 +94,28 @@
     if (depth > 20 || !obj || typeof obj !== "object") return;
     // video
     if (Array.isArray(obj.video_versions)) {
-      for (const v of obj.video_versions) if (v.url) out.push(v.url);
+      for (const v of obj.video_versions) {
+        if (v.url) out.push({ url: v.url, type: "video", thumb: v.thumbnail_url || null, y: out.length });
+      }
       return;
     }
-    if (typeof obj.video_url === "string") out.push(obj.video_url);
-    // image
+    if (typeof obj.video_url === "string") {
+      out.push({ url: obj.video_url, type: "video", thumb: null, y: out.length });
+    }
+    // image — collect all candidates, use highest quality
     if (obj.image_versions2?.candidates) {
-      for (const c of obj.image_versions2.candidates) if (c.url) out.push(c.url);
+      const cands = obj.image_versions2.candidates;
+      if (cands.length) {
+        const best = cands[cands.length - 1] || cands[0];
+        if (best.url) {
+          out.push({ url: best.url, type: "image", thumb: best.url, y: out.length });
+        }
+      }
+      return;
+    }
+    // Carousel: nested media array
+    if (obj.carousel_media) {
+      for (const m of obj.carousel_media) findMediaUrls(m, out, depth + 1);
       return;
     }
     for (const val of (Array.isArray(obj) ? obj : Object.values(obj))) {
@@ -157,10 +178,10 @@
       container.style.position = "relative";
     }
 
-    const wrap = document.createElement("div");
-    wrap.className = WRAP_CLASS;
-
     const isVideo = mediaType === "video";
+    const wrap = document.createElement("div");
+    wrap.className = WRAP_CLASS + (isVideo ? " tmd-video" : "");
+
     const label = isVideo ? "Video" : "Photo";
     const icon = isVideo ? ICON_VIDEO_DL : ICON_IMG_DL;
 
@@ -202,12 +223,15 @@
     wrap.addEventListener("mouseenter", show);
     wrap.addEventListener("mouseleave", hide);
 
-    // Also watch for src changes on video
+    // Also watch for src changes on video — capture poster thumbnail too
     if (isVideo) {
       const srcObs = new MutationObserver(() => {
         const s = mediaEl.currentSrc || mediaEl.src || "";
+        const poster = mediaEl.poster || "";
         if (s && !s.startsWith("blob:")) {
-          chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls: [s] });
+          const msg = { type: "EXTRACT_FROM_SCRIPTS", urls: [s] };
+          if (poster) msg.thumbnails = { [s]: poster };
+          chrome.runtime.sendMessage(msg);
         }
       });
       srcObs.observe(mediaEl, { attributes: true, attributeFilter: ["src"] });
@@ -258,21 +282,26 @@
     btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
 
     try {
-      let url = getNonBlobSrc(video);
+      let url = "";
 
-      // Fallback 1: captured network URLs
-      if (!url) {
-        const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
-        const urls = captured?.urls || [];
-        if (urls.length) url = urls[urls.length - 1];
+      // Strategy 1 (primary): network-captured CDN URLs — most reliable
+      const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
+      const capturedUrls = captured?.urls || [];
+      if (capturedUrls.length) {
+        url = capturedUrls[capturedUrls.length - 1]; // highest quality
       }
 
-      // Fallback 2: embed endpoint
+      // Strategy 2: video element's currentSrc (if not blob)
+      if (!url) {
+        url = getNonBlobSrc(video);
+      }
+
+      // Strategy 3: embed endpoint fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
-        const urls = embed?.videoUrls || [];
-        if (urls.length) url = urls[0];
+        const embedUrls = embed?.videoUrls || [];
+        if (embedUrls.length) url = embedUrls[0];
       }
 
       if (!url) {

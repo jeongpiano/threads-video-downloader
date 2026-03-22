@@ -12,7 +12,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Primary source: live DOM scan (always current page)
   const videoSet = new Set();
   const imageSet = new Set();
-  let pageThumbnails = {};
+  const allThumbnails = {};
 
   // Scan current page DOM — this is the source of truth for current page
   try {
@@ -23,27 +23,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (result?.result) {
       result.result.videos.forEach((u) => videoSet.add(u));
       result.result.images.forEach((u) => imageSet.add(u));
-      Object.assign(pageThumbnails, result.result.thumbnails || {});
+      Object.assign(allThumbnails, result.result.thumbnails || {});
     }
   } catch (e) {
     status.textContent = "페이지 스캔 실패. 새로고침 후 다시 시도해주세요.";
     return;
   }
 
-  // Supplement: network-captured URLs for THIS page only
-  // Filter: only include URLs that match the current page's post/user context
+  // Supplement: network-captured URLs + thumbnails for THIS page
   try {
     const r = await chrome.runtime.sendMessage({ type: "GET_CAPTURED_URLS", tabId: tab.id });
-    const currentPagePrefix = extractPostId(tab.url);
     (r?.urls || []).forEach((u) => {
-      // Only add if it's a high-quality video URL (not ad/related content)
-      if (u.includes(".mp4") || u.includes("/v/t16/")) {
-        videoSet.add(u);
-      }
+      if (u.includes(".mp4") || u.includes("/v/t16/")) videoSet.add(u);
     });
     (r?.imageUrls || []).forEach((u) => {
       if (!u.includes("/t51.2885-19/")) imageSet.add(u);
     });
+    // Merge thumbnails from network capture (video poster etc.)
+    if (r?.thumbnails) Object.assign(allThumbnails, r.thumbnails);
   } catch {}
 
   // Final fallback: embed endpoint (only if nothing found)
@@ -75,7 +72,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     html += `<div class="section-title">Videos (${videos.length})</div>`;
     html += `<ul class="media-list">`;
     videos.forEach((url, i) => {
-      const thumb = pageThumbnails[url] || null;
+      const thumb = allThumbnails[url] || null;
       html += mediaItem(url, i, "video", `Video ${i + 1}`, thumb);
     });
     html += `</ul>`;
@@ -86,7 +83,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     html += `<div class="section-title">Photos (${images.length})</div>`;
     html += `<ul class="media-list">`;
     images.forEach((url, i) => {
-      const thumb = pageThumbnails[url] || url; // image URL itself is the thumbnail
+      const thumb = allThumbnails[url] || url;
       html += mediaItem(url, videos.length + i, "photo", `Photo ${i + 1}`, thumb);
     });
     html += `</ul>`;
@@ -102,8 +99,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // All media URLs + thumbnails in order
   const allMedia = [
-    ...videos.map((u) => ({ url: u, ext: "mp4", thumb: pageThumbnails[u] || null })),
-    ...images.map((u) => ({ url: u, ext: "jpg", thumb: u }))
+    ...videos.map((u) => ({ url: u, ext: "mp4", thumb: allThumbnails[u] || null })),
+    ...images.map((u) => ({ url: u, ext: "jpg", thumb: allThumbnails[u] || u }))
   ];
 
   // Individual buttons
@@ -191,18 +188,29 @@ function scanPage() {
     try { dig(JSON.parse(s.textContent), 0); } catch {}
   }
 
-  // DOM video elements — capture src + poster
+  // DOM video elements — capture src + poster thumbnail
   for (const v of document.querySelectorAll("video")) {
     const src = v.currentSrc || v.src || "";
     if (src && !src.startsWith("blob:")) {
       videos.push(src);
-      // Use video element's poster as thumbnail if available
+      // poster attribute is the primary thumbnail
       if (v.poster) thumbnails[src] = v.poster;
     }
     const source = v.querySelector("source");
     if (source?.src && !source.src.startsWith("blob:")) {
       videos.push(source.src);
       if (v.poster) thumbnails[source.src] = v.poster;
+    }
+
+    // Fallback: look for a sibling/parent <img> that could be the thumbnail preview
+    if (!thumbnails[src]) {
+      const thumbImg = v.closest("[data-image], [data-thumb]")?.querySelector("img")
+        || v.parentElement?.querySelector("img[src*='cdninstagram'], img[src*='fbcdn']")
+        || v.parentElement?.parentElement?.querySelector("img[src*='cdninstagram'], img[src*='fbcdn']");
+      if (thumbImg) {
+        const tSrc = thumbImg.src || thumbImg.getAttribute("srcset")?.split(",")?.[0]?.split(" ")?.[0] || "";
+        if (tSrc) thumbnails[src] = tSrc;
+      }
     }
   }
 
@@ -220,12 +228,27 @@ function scanPage() {
   function dig(obj, d) {
     if (d > 20 || !obj || typeof obj !== "object") return;
     if (Array.isArray(obj.video_versions)) {
-      for (const v of obj.video_versions) if (v.url) videos.push(v.url);
+      for (const v of obj.video_versions) if (v.url) {
+        videos.push(v.url);
+        // thumbnail_url is sometimes provided in the video_versions entry
+        if (v.thumbnail_url) thumbnails[v.url] = v.thumbnail_url;
+      }
       return;
     }
     if (typeof obj.video_url === "string") videos.push(obj.video_url);
+    // image_versions2 candidates: last entry is highest quality
     if (obj.image_versions2?.candidates) {
-      for (const c of obj.image_versions2.candidates) if (c.url) images.push(c.url);
+      const cands = obj.image_versions2.candidates;
+      const best = cands[cands.length - 1] || cands[0];
+      if (best?.url) {
+        images.push(best.url);
+        thumbnails[best.url] = best.url; // image URL = its own thumbnail
+      }
+      return;
+    }
+    // Carousel: has both image_versions2 (thumbnail for video) + video_versions
+    if (obj.carousel_media) {
+      for (const m of obj.carousel_media) dig(m, d + 1);
       return;
     }
     for (const v of (Array.isArray(obj) ? obj : Object.values(obj))) dig(v, d + 1);

@@ -38,7 +38,7 @@ function classifyUrl(url) {
 
 function getTab(tabId) {
   if (!capturedMedia.has(tabId)) {
-    capturedMedia.set(tabId, { videos: new Map(), images: new Map() });
+    capturedMedia.set(tabId, { videos: new Map(), images: new Map(), thumbnails: {} });
   }
   return capturedMedia.get(tabId);
 }
@@ -64,7 +64,8 @@ const handlers = {
     respond({
       ok: true,
       urls: tab ? [...tab.videos.keys()] : [],
-      imageUrls: tab ? [...tab.images.keys()] : []
+      imageUrls: tab ? [...tab.images.keys()] : [],
+      thumbnails: tab?.thumbnails || {}
     });
   },
 
@@ -105,6 +106,11 @@ const handlers = {
         } else {
           tab.images.set(url, Date.now());
         }
+      }
+      // Merge thumbnails if provided
+      if (msg.thumbnails && tabId) {
+        if (!tab.thumbnails) tab.thumbnails = {};
+        Object.assign(tab.thumbnails, msg.thumbnails);
       }
       updateBadge(tabId);
     }
