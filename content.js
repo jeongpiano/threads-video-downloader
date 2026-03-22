@@ -15,73 +15,13 @@
 
   init();
 
-  // Inject styles directly into the page to ensure they always load
+  // Inject styles directly into the page
   function injectStyles() {
     if (document.getElementById("tmd-styles")) return;
     const css = `
-      .tmd-wrap {
-        position: absolute !important;
-        right: 10px !important;
-        bottom: 10px !important;
-        top: auto !important;
-        z-index: 2147483647 !important;
-        opacity: 0;
-        transform: translateY(4px) !important;
-        transition: opacity 180ms ease, transform 180ms ease;
-        pointer-events: none;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-      }
-      .tmd-wrap.tmd-video {
-        right: 10px !important;
-        top: 10px !important;
-        bottom: auto !important;
-        opacity: 1 !important;
-        transform: none !important;
-      }
-      .tmd-wrap:hover,
-      .tmd-wrap.tmd-visible {
-        opacity: 1 !important;
-        transform: none !important;
-      }
-      .tmd-wrap .tmd-btn {
-        pointer-events: auto !important;
-        position: relative !important;
-        z-index: 1 !important;
-      }
-      .tmd-wrap:has(button:disabled) {
-        opacity: 1 !important;
-        transform: none !important;
-      }
-      .tmd-btn {
-        display: inline-flex !important;
-        align-items: center !important;
-        gap: 6px !important;
-        padding: 8px 14px !important;
-        border: none !important;
-        border-radius: 20px !important;
-        background: rgba(0, 0, 0, 0.78) !important;
-        color: #fff !important;
-        font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-        cursor: pointer !important;
-        backdrop-filter: blur(10px) !important;
-        -webkit-backdrop-filter: blur(10px) !important;
-        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35) !important;
-        transition: background 150ms ease, transform 120ms ease !important;
-        white-space: nowrap !important;
-        user-select: none !important;
-        -webkit-user-select: none !important;
-      }
-      .tmd-btn:hover {
-        background: rgba(0, 0, 0, 0.92) !important;
-        transform: scale(1.05) !important;
-      }
-      .tmd-btn:active { transform: scale(0.96) !important; }
-      .tmd-btn:disabled { cursor: wait !important; opacity: 0.8 !important; }
-      .tmd-btn svg { flex-shrink: 0 !important; }
+      .tmd-wrap { pointer-events: none !important; }
+      .tmd-wrap .tmd-btn { pointer-events: auto !important; }
       @keyframes tmd-spin { to { transform: rotate(360deg); } }
-      .tmd-spin { animation: tmd-spin 0.7s linear infinite; }
     `;
     const el = document.createElement("style");
     el.id = "tmd-styles";
@@ -213,8 +153,12 @@
   }
 
   function scan() {
-    // Videos — button goes on the OUTSIDE of the video player (avoids controls overlap)
-    for (const video of document.querySelectorAll("video")) {
+    const videos = document.querySelectorAll("video");
+    const imgs = document.querySelectorAll("img");
+    console.log("[TMD] scan: videos=", videos.length, "imgs=", imgs.length);
+
+    // Videos
+    for (const video of videos) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
       const container = findContainer(video, true);
@@ -275,8 +219,31 @@
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = BTN_CLASS;
-    btn.innerHTML = `${icon}<span>${label}</span>`;
+    // Apply inline styles directly — no CSS class dependency
+    const posStyle = isVideo
+      ? "position:absolute;right:10px;top:10px;z-index:2147483647;opacity:1"
+      : "position:absolute;right:10px;bottom:10px;z-index:2147483647;opacity:0.5";
+    wrap.setAttribute("style", posStyle);
+
+    btn.setAttribute("style", [
+      "display:inline-flex",
+      "align-items:center",
+      "gap:6px",
+      "padding:8px 14px",
+      "border:none",
+      "border-radius:20px",
+      "background:rgba(0,0,0,0.78)",
+      "color:#fff",
+      "font-size:13px",
+      "font-weight:600",
+      "font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif",
+      "cursor:pointer",
+      "backdrop-filter:blur(10px)",
+      "box-shadow:0 2px 16px rgba(0,0,0,0.35)",
+      "white-space:nowrap",
+      "user-select:none",
+      "pointer-events:auto"
+    ].join(";"));
 
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -289,23 +256,16 @@
       }
     });
 
+    // Hover effect: adjust opacity
+    mediaEl.addEventListener("mouseenter", () => {
+      if (!isVideo) wrap.setAttribute("style", posStyle + ";opacity:1");
+    });
+    mediaEl.addEventListener("mouseleave", () => {
+      if (!isVideo) wrap.setAttribute("style", posStyle);
+    });
+
     wrap.appendChild(btn);
     container.appendChild(wrap);
-
-    // JS-based hover: listen on both the media element and the container
-    const show = () => wrap.classList.add(VISIBLE_CLASS);
-    const hide = () => {
-      setTimeout(() => {
-        if (!wrap.matches(":hover") && !mediaEl.matches(":hover")) {
-          wrap.classList.remove(VISIBLE_CLASS);
-        }
-      }, 200);
-    };
-
-    mediaEl.addEventListener("mouseenter", show);
-    mediaEl.addEventListener("mouseleave", hide);
-    wrap.addEventListener("mouseenter", show);
-    wrap.addEventListener("mouseleave", hide);
 
     // Also watch for src changes on video — capture poster thumbnail too
     if (isVideo) {
