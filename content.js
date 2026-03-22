@@ -162,51 +162,34 @@
   }
 
   function findContainer(el, isVideo) {
-    if (isVideo) {
-      // For videos: walk UP from the video element until we find a container
-      // that is NOT the video element itself and is big enough.
-      // This ensures the button is placed OUTSIDE the video element.
-      let node = el.parentElement;
-      let depth = 0;
-      while (node && depth < 15) {
-        // NEVER use the video element itself as container
-        if (node === el) {
-          node = node.parentElement;
-          depth++;
-          continue;
-        }
-        const r = node.getBoundingClientRect();
-        // Container must be meaningfully bigger than the video to be outside it
-        if (r.width >= 150 && r.height >= 150) {
-          return node;
-        }
-        node = node.parentElement;
-        depth++;
-      }
-      // Final fallback: grandparent (should be outside the video element)
-      const gp = el.parentElement?.parentElement;
-      if (gp && gp !== el) return gp;
-      return el.parentElement;
-    } else {
-      // For images: standard traversal
-      let node = el.parentElement;
-      for (let i = 0; i < 8 && node; i++) {
-        const r = node.getBoundingClientRect();
-        if (r.width >= 150 && r.height >= 150) return node;
-        node = node.parentElement;
-      }
-      return el.parentElement;
+    // For videos: always use the video element itself as container
+    // (CSS will position the button at top-right OUTSIDE the video content area)
+    if (isVideo) return el;
+    // For images: standard traversal
+    let node = el.parentElement;
+    for (let i = 0; i < 8 && node; i++) {
+      const r = node.getBoundingClientRect();
+      if (r.width >= 150 && r.height >= 150) return node;
+      node = node.parentElement;
     }
+    return el.parentElement;
   }
 
   // ── Overlay button with JS-based hover ──
   function attachOverlay(container, mediaEl, mediaType) {
-    // Ensure positioning context
-    if (getComputedStyle(container).position === "static") {
-      container.style.position = "relative";
+    const isVideo = mediaType === "video";
+
+    // For videos: make the video element positionable (it IS the container)
+    if (isVideo) {
+      if (getComputedStyle(mediaEl).position === "static") {
+        mediaEl.style.position = "relative";
+      }
+    } else {
+      if (getComputedStyle(container).position === "static") {
+        container.style.position = "relative";
+      }
     }
 
-    const isVideo = mediaType === "video";
     const wrap = document.createElement("div");
     wrap.className = WRAP_CLASS + (isVideo ? " tmd-video" : "");
 
@@ -233,19 +216,15 @@
     container.appendChild(wrap);
 
     // JS-based hover: listen on both the media element and the container
-    // This is more reliable than pure CSS :hover on deeply nested React DOM
     const show = () => wrap.classList.add(VISIBLE_CLASS);
     const hide = () => {
-      // Small delay so user can move mouse to the button
       setTimeout(() => {
-        if (!wrap.matches(":hover") && !container.matches(":hover")) {
+        if (!wrap.matches(":hover") && !mediaEl.matches(":hover")) {
           wrap.classList.remove(VISIBLE_CLASS);
         }
       }, 200);
     };
 
-    container.addEventListener("mouseenter", show);
-    container.addEventListener("mouseleave", hide);
     mediaEl.addEventListener("mouseenter", show);
     mediaEl.addEventListener("mouseleave", hide);
     wrap.addEventListener("mouseenter", show);

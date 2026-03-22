@@ -1,26 +1,26 @@
-/* ── Button wrapper: click-through — only the button is clickable ── */
+/* ── Button wrapper ── */
 .tmd-wrap {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  right: 10px;
+  bottom: 10px;
   z-index: 2147483647;
-  opacity: 0.45;
+  opacity: 0;
   transform: translateY(4px);
   transition: opacity 180ms ease, transform 180ms ease;
-  /* Wrap is transparent to clicks — passes through to underlying elements */
   pointer-events: none;
 }
 
-/* Video button: top-right, always fully visible */
+/* Video button: top-right, always visible (on the video element itself) */
 .tmd-wrap.tmd-video {
-  right: 12px;
-  top: 12px;
+  right: 10px;
+  top: 10px;
   bottom: auto;
-  opacity: 1 !important;
-  transform: translateY(0) !important;
+  opacity: 1;
+  transform: translateY(0);
+  /* Video element is the container, so button sits on top at corner */
 }
 
-/* Wrapper fully visible on hover — but still click-through */
+/* Fully visible on hover */
 .tmd-wrap:hover,
 .tmd-wrap.tmd-visible {
   opacity: 1;
@@ -36,7 +36,6 @@
 .tmd-wrap:has(button:disabled) {
   opacity: 1 !important;
   transform: translateY(0) !important;
-  pointer-events: none !important;
 }
 
 /* ── Download button ── */
