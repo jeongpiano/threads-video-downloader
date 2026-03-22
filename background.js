@@ -5,25 +5,28 @@
  * - Downloads media via chrome.downloads
  */
 
-const capturedMedia = new Map(); // tabId -> { videos: Map<url,ts>, images: Map<url,ts> }
+const capturedMedia = new Map(); // tabId -> { videos: Map<url,ts>, images: Map<url,ts>, thumbnails: {} }
 
-// ── Network request interception ──
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (details.tabId < 0) return;
-    const url = details.url;
-    const type = classifyUrl(url);
-    if (!type) return;
-
-    const tab = getTab(details.tabId);
-    tab[type].set(url, Date.now());
-    updateBadge(details.tabId);
-  },
-  {
-    urls: ["https://*.cdninstagram.com/*", "https://*.fbcdn.net/*"],
-    types: ["media", "xmlhttprequest", "image", "other"]
-  }
-);
+// ── Network request interception (webRequest) ──
+try {
+  chrome.webRequest.onBeforeRequest.addListener(
+    (details) => {
+      if (details.tabId < 0) return;
+      const url = details.url;
+      const type = classifyUrl(url);
+      if (!type) return;
+      const tab = getTab(details.tabId);
+      tab[type].set(url, Date.now());
+      updateBadge(details.tabId);
+    },
+    {
+      urls: ["https://*.cdninstagram.com/*", "https://*.fbcdn.net/*"],
+      types: ["media", "xmlhttprequest", "image", "other"]
+    }
+  );
+} catch (e) {
+  console.warn("[TMD] webRequest not available:", e.message);
+}
 
 function classifyUrl(url) {
   // Skip tiny resources and profile pics
@@ -52,8 +55,13 @@ function updateBadge(tabId) {
 
 // ── Message router ──
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  const fn = handlers[msg?.type];
-  if (fn) { fn(msg, sender, sendResponse); return true; }
+  try {
+    const fn = handlers[msg?.type];
+    if (fn) { fn(msg, sender, sendResponse); return true; }
+  } catch (e) {
+    console.error("[TMD] Handler error:", e);
+    sendResponse({ ok: false, error: e.message });
+  }
   return false;
 });
 
@@ -166,7 +174,11 @@ function sanitize(s) {
 }
 
 // ── Cleanup ──
-chrome.tabs.onRemoved.addListener((tabId) => capturedMedia.delete(tabId));
-chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === "loading") { capturedMedia.delete(tabId); updateBadge(tabId); }
-});
+try {
+  chrome.tabs.onRemoved.addListener((tabId) => capturedMedia.delete(tabId));
+  chrome.tabs.onUpdated.addListener((tabId, info) => {
+    if (info.status === "loading") { capturedMedia.delete(tabId); updateBadge(tabId); }
+  });
+} catch (e) {
+  console.warn("[TMD] tabs listeners error:", e.message);
+}

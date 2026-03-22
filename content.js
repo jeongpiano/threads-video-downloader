@@ -86,7 +86,9 @@
       const urls = media.map((m) => m.url);
       const thumbnails = {};
       media.forEach((m) => { if (m.thumb) thumbnails[m.url] = m.thumb; });
-      chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls, thumbnails });
+      try {
+        chrome.runtime.sendMessage({ type: "EXTRACT_FROM_SCRIPTS", urls, thumbnails });
+      } catch (_) {}
     }
   }
 
@@ -238,7 +240,7 @@
         if (s && !s.startsWith("blob:")) {
           const msg = { type: "EXTRACT_FROM_SCRIPTS", urls: [s] };
           if (poster) msg.thumbnails = { [s]: poster };
-          chrome.runtime.sendMessage(msg);
+          try { chrome.runtime.sendMessage(msg); } catch (_) {}
         }
       });
       srcObs.observe(mediaEl, { attributes: true, attributeFilter: ["src"] });
@@ -408,9 +410,14 @@
 
   function sendMsg(msg) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage(msg, (r) => {
-        resolve(chrome.runtime.lastError ? null : r);
-      });
+      try {
+        chrome.runtime.sendMessage(msg, (r) => {
+          resolve(chrome.runtime.lastError ? null : r);
+        });
+      } catch (e) {
+        // Service worker may be unavailable or restarting
+        resolve(null);
+      }
     });
   }
 
