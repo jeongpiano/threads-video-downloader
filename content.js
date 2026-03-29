@@ -234,30 +234,25 @@
     }
   }
 
+  // Check if this specific image is a video poster (not just near a video in carousel)
   function hasVideoNearby(img) {
+    // Only check 2 levels up — enough for video poster wrapper, but not carousel-wide
     let node = img;
-    for (let i = 0; i < 6 && node; i++) {
+    for (let i = 0; i < 2 && node; i++) {
       node = node.parentElement;
       if (!node) break;
-      if (node.querySelector("video")) return true;
-      const svgs = node.querySelectorAll("svg");
-      for (const svg of svgs) {
-        const paths = svg.innerHTML || "";
-        if (paths.includes("M11") && paths.includes("M16") ||
-            svg.getAttribute("aria-label")?.toLowerCase().includes("audio") ||
-            svg.getAttribute("aria-label")?.toLowerCase().includes("mute") ||
-            svg.getAttribute("aria-label")?.toLowerCase().includes("sound") ||
-            svg.getAttribute("aria-label")?.toLowerCase().includes("소리") ||
-            svg.getAttribute("aria-label")?.toLowerCase().includes("음소거")) {
-          return true;
-        }
-      }
-      const buttons = node.querySelectorAll("button, [role='button']");
-      for (const btn of buttons) {
+
+      // Direct sibling or child <video> means this img IS the poster
+      const video = node.querySelector(":scope > video, :scope > div > video");
+      if (video) return true;
+
+      // Audio/mute button as DIRECT child of this container = video controls
+      for (const btn of node.querySelectorAll(":scope > button, :scope > div > button, :scope > [role='button']")) {
         const label = (btn.getAttribute("aria-label") || "").toLowerCase();
         if (label.includes("mute") || label.includes("unmute") ||
             label.includes("sound") || label.includes("audio") ||
-            label.includes("음소거") || label.includes("소리")) {
+            label.includes("음소거") || label.includes("소리") ||
+            label.includes("오디오")) {
           return true;
         }
       }
@@ -267,12 +262,22 @@
 
   function findMediaContainer(el) {
     let node = el.parentElement;
+    let bestContainer = null;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
-      if (r.width >= 80 && r.height >= 80) return node;
+      const style = getComputedStyle(node);
+      if (r.width >= 80 && r.height >= 80) {
+        // Pick the first good container, but prefer ones with overflow:hidden
+        // (typical media wrapper) or position:relative
+        if (!bestContainer) bestContainer = node;
+        // If this is a positioned container, prefer it
+        if (style.position !== "static" || style.overflow === "hidden") {
+          return node;
+        }
+      }
       node = node.parentElement;
     }
-    return el.parentElement;
+    return bestContainer || el.parentElement;
   }
 
   // ── Overlay button ──
