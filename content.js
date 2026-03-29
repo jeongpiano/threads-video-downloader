@@ -446,22 +446,10 @@
   }
 
   function buildFilename(ext) {
-    const isIG = location.hostname.includes("instagram.com");
-    const prefix = isIG ? "instagram" : "threads";
     const parts = location.pathname.split("/").filter(Boolean);
-
-    let postId;
-    if (isIG) {
-      // Instagram: /p/{shortcode}/ or /reel/{shortcode}/
-      const pIdx = parts.indexOf("p");
-      const rIdx = parts.indexOf("reel");
-      const idx = pIdx !== -1 ? pIdx : rIdx;
-      postId = (idx !== -1 && parts[idx + 1]) ? parts[idx + 1] : "ig";
-    } else {
-      const postIdx = parts.indexOf("post");
-      postId = (postIdx !== -1 && parts[postIdx + 1]) ? parts[postIdx + 1] : "threads";
-    }
-    return `${prefix}/${postId}_${Date.now()}.${ext}`;
+    const postIdx = parts.indexOf("post");
+    const postId = (postIdx !== -1 && parts[postIdx + 1]) ? parts[postIdx + 1] : "threads";
+    return `threads/${postId}_${Date.now()}.${ext}`;
   }
 
   function showStatus(btn, restoreHtml, html, delay) {

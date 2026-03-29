@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Threads & Instagram Media Downloader",
-  "version": "4.0.0",
-  "description": "Download photos and videos from Threads and Instagram with one click.",
+  "name": "Threads Media Downloader",
+  "version": "3.0.0",
+  "description": "Download photos and videos from Threads with one click.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -12,28 +12,15 @@
     "downloads",
     "activeTab",
     "scripting",
-    "webRequest",
-    "declarativeNetRequest"
+    "webRequest"
   ],
   "host_permissions": [
     "https://www.threads.com/*",
     "https://threads.com/*",
     "https://*.threads.com/*",
-    "https://www.instagram.com/*",
-    "https://instagram.com/*",
-    "https://*.instagram.com/*",
     "https://*.cdninstagram.com/*",
     "https://*.fbcdn.net/*"
   ],
-  "declarative_net_request": {
-    "rule_resources": [
-      {
-        "id": "referer_rules",
-        "enabled": true,
-        "path": "rules.json"
-      }
-    ]
-  },
   "background": {
     "service_worker": "background.js"
   },
@@ -49,10 +36,7 @@
       "matches": [
         "https://www.threads.com/*",
         "https://threads.com/*",
-        "https://*.threads.com/*",
-        "https://www.instagram.com/*",
-        "https://instagram.com/*",
-        "https://*.instagram.com/*"
+        "https://*.threads.com/*"
       ],
       "js": [
         "content.js"

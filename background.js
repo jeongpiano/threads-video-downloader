@@ -152,7 +152,7 @@ function download(url, filename) {
     chrome.downloads.download(
       {
         url,
-        filename: sanitize(filename || `media/${Date.now()}.mp4`),
+        filename: sanitize(filename || `threads/${Date.now()}.mp4`),
         saveAs: false,
         conflictAction: "uniquify"
       },
@@ -162,9 +162,6 @@ function download(url, filename) {
     );
   });
 }
-
-// ── Referer injection via declarativeNetRequest ──
-// Ensures CDN downloads get proper Referer (set in rules.json)
 
 // ── Embed fallback ──
 async function fetchEmbed(postUrl) {
