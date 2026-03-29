@@ -12,7 +12,8 @@
     "downloads",
     "activeTab",
     "scripting",
-    "webRequest"
+    "webRequest",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://www.threads.com/*",
@@ -24,6 +25,15 @@
     "https://*.cdninstagram.com/*",
     "https://*.fbcdn.net/*"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "referer_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "background": {
     "service_worker": "background.js"
   },
