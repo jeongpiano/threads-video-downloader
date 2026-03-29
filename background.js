@@ -143,24 +143,58 @@ const handlers = {
 };
 
 // ── Download ──
-function download(url, filename) {
-  return new Promise((resolve, reject) => {
-    if (!url || url.startsWith("blob:")) {
-      reject(new Error("Cannot download blob: URL"));
-      return;
-    }
-    chrome.downloads.download(
-      {
-        url,
-        filename: sanitize(filename || `threads/${Date.now()}.mp4`),
-        saveAs: false,
-        conflictAction: "uniquify"
-      },
-      (id) => chrome.runtime.lastError
-        ? reject(new Error(chrome.runtime.lastError.message))
-        : resolve(id)
-    );
-  });
+// Fetch via background with proper Referer, then download from blob
+async function download(url, filename) {
+  if (!url || url.startsWith("blob:")) {
+    throw new Error("Cannot download blob: URL");
+  }
+
+  // Determine Referer based on URL
+  const referer = url.includes("instagram") || url.includes("cdninstagram") || url.includes("fbcdn")
+    ? "https://www.instagram.com/"
+    : "https://www.threads.com/";
+
+  try {
+    // Fetch with proper Referer to get full response
+    const res = await fetch(url, {
+      headers: { "Referer": referer }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    return new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        {
+          url: blobUrl,
+          filename: sanitize(filename || `media/${Date.now()}.mp4`),
+          saveAs: false,
+          conflictAction: "uniquify"
+        },
+        (id) => {
+          // Revoke blob URL after download starts
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(id);
+        }
+      );
+    });
+  } catch (fetchErr) {
+    // Fallback: direct URL download (works for some CDN URLs)
+    return new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        {
+          url,
+          filename: sanitize(filename || `media/${Date.now()}.mp4`),
+          saveAs: false,
+          conflictAction: "uniquify"
+        },
+        (id) => chrome.runtime.lastError
+          ? reject(new Error(chrome.runtime.lastError.message))
+          : resolve(id)
+      );
+    });
+  }
 }
 
 // ── Embed fallback ──
