@@ -13,22 +13,9 @@
   let scanTimer = null;
   let isNavigating = false;
 
-  // ── DEBUG: visible marker ──
-  const dbg = document.createElement("div");
-  dbg.id = "tmd-debug";
-  Object.assign(dbg.style, {
-    position: "fixed", top: "0", left: "0", zIndex: "999999",
-    background: "#6C63FF", color: "#fff", padding: "6px 12px",
-    fontSize: "12px", fontFamily: "monospace", pointerEvents: "none"
-  });
-  (document.body || document.documentElement).appendChild(dbg);
-  function setDebug(msg) { dbg.textContent = `[TMD] ${msg}`; }
-  setDebug("loading…");
-
   init();
 
   function init() {
-    setDebug("init");
     extractVideoUrlsFromScripts();
     scheduleScan();
 
@@ -62,6 +49,10 @@
     window.addEventListener("popstate", () => {
       if (location.href !== lastUrl) onNavigate();
     });
+
+    // Fullscreen change: re-scan to attach buttons inside fullscreen container
+    document.addEventListener("fullscreenchange", () => scheduleScan());
+    document.addEventListener("webkitfullscreenchange", () => scheduleScan());
   }
 
   function onNavigate() {
@@ -69,12 +60,10 @@
     isNavigating = true;
     lastUrl = location.href;
 
-    // Cancel any pending scan so cleanup + fresh scan run cleanly
     if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
 
     cleanup();
 
-    // Wait for React to finish rendering before extracting/scanning
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         extractVideoUrlsFromScripts();
@@ -85,16 +74,14 @@
   }
 
   // ── SSR JSON parsing (video_versions / image_versions2) ──
-  // Extracts URLs + thumbnail + viewport position → sent to popup for ordered display
   function extractVideoUrlsFromScripts() {
-    const media = []; // { url, type, thumb, y }
+    const media = [];
     for (const script of document.querySelectorAll('script[type="application/json"]')) {
       try {
         findMediaUrls(JSON.parse(script.textContent), media, 0);
       } catch { /* skip */ }
     }
     if (media.length) {
-      // Sort by viewport position (top to bottom)
       media.sort((a, b) => a.y - b.y);
       const urls = media.map((m) => m.url);
       const thumbnails = {};
@@ -105,7 +92,6 @@
 
   function findMediaUrls(obj, out, depth) {
     if (depth > 20 || !obj || typeof obj !== "object") return;
-    // video
     if (Array.isArray(obj.video_versions)) {
       for (const v of obj.video_versions) {
         if (v.url) out.push({ url: v.url, type: "video", thumb: v.thumbnail_url || null, y: out.length });
@@ -115,18 +101,18 @@
     if (typeof obj.video_url === "string") {
       out.push({ url: obj.video_url, type: "video", thumb: null, y: out.length });
     }
-    // image — collect all candidates, use highest quality
     if (obj.image_versions2?.candidates) {
       const cands = obj.image_versions2.candidates;
       if (cands.length) {
-        const best = cands[cands.length - 1] || cands[0];
+        // Pick highest resolution: sort by width descending
+        const sorted = [...cands].sort((a, b) => (b.width || 0) - (a.width || 0));
+        const best = sorted[0] || cands[0];
         if (best.url) {
           out.push({ url: best.url, type: "image", thumb: best.url, y: out.length });
         }
       }
       return;
     }
-    // Carousel: nested media array
     if (obj.carousel_media) {
       for (const m of obj.carousel_media) findMediaUrls(m, out, depth + 1);
       return;
@@ -138,23 +124,19 @@
 
   // ── DOM scan: attach buttons on images & videos ──
   function scheduleScan() {
-    if (scanTimer) {
-      // Reschedule: new content may have arrived, push the timer out
-      clearTimeout(scanTimer);
-    }
+    if (scanTimer) clearTimeout(scanTimer);
     scanTimer = setTimeout(() => {
       scanTimer = null;
       scan();
-    }, 800);
+    }, 600);
   }
 
   function scan() {
-    setDebug(`scan v:${document.querySelectorAll("video").length} i:${document.querySelectorAll("img").length}`);
-    // Videos — button goes on the OUTSIDE of the video player (avoids controls overlap)
+    // Videos — find proper container (NOT the video element itself)
     for (const video of document.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
-      const container = findContainer(video, true);
+      const container = findVideoContainer(video);
       if (container) attachOverlay(container, video, "video");
     }
 
@@ -163,45 +145,48 @@
       if (img.hasAttribute(PROCESSED)) continue;
       const src = img.src || img.currentSrc || "";
       if (!src || !CDN_PATTERN.test(src)) continue;
-      // Skip small images (profile pics, icons)
       const rect = img.getBoundingClientRect();
-      if (rect.width < 150 || rect.height < 150) continue;
-      // Skip profile pictures path
-      if (src.includes("/t51.2885-19/")) continue;
+      if (rect.width < 100 || rect.height < 100) continue;
+      if (src.includes("/t51.2885-19/")) continue; // profile pic
 
       img.setAttribute(PROCESSED, "image");
-      const container = findContainer(img, false);
+      const container = findImageContainer(img);
       if (container) attachOverlay(container, img, "image");
     }
   }
 
-  function findContainer(el, isVideo) {
-    // For videos: always use the video element itself as container
-    // (CSS will position the button at top-right OUTSIDE the video content area)
-    if (isVideo) return el;
-    // For images: standard traversal
-    let node = el.parentElement;
+  // Find a suitable parent container for the video button
+  // Video elements cannot have child divs, so we must go up to a positioned parent
+  function findVideoContainer(video) {
+    let node = video.parentElement;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
-      if (r.width >= 150 && r.height >= 150) return node;
+      // Find a container that roughly matches the video size
+      if (r.width >= 100 && r.height >= 80) {
+        return node;
+      }
       node = node.parentElement;
     }
-    return el.parentElement;
+    return video.parentElement;
   }
 
-  // ── Overlay button with JS-based hover ──
+  function findImageContainer(img) {
+    let node = img.parentElement;
+    for (let i = 0; i < 8 && node; i++) {
+      const r = node.getBoundingClientRect();
+      if (r.width >= 100 && r.height >= 100) return node;
+      node = node.parentElement;
+    }
+    return img.parentElement;
+  }
+
+  // ── Overlay button ──
   function attachOverlay(container, mediaEl, mediaType) {
     const isVideo = mediaType === "video";
 
-    // For videos: make the video element positionable (it IS the container)
-    if (isVideo) {
-      if (getComputedStyle(mediaEl).position === "static") {
-        mediaEl.style.position = "relative";
-      }
-    } else {
-      if (getComputedStyle(container).position === "static") {
-        container.style.position = "relative";
-      }
+    // Ensure container is positionable
+    if (getComputedStyle(container).position === "static") {
+      container.style.position = "relative";
     }
 
     const wrap = document.createElement("div");
@@ -229,22 +214,24 @@
     wrap.appendChild(btn);
     container.appendChild(wrap);
 
-    // JS-based hover: listen on both the media element and the container
+    // JS-based hover: show on container or media hover
     const show = () => wrap.classList.add(VISIBLE_CLASS);
     const hide = () => {
       setTimeout(() => {
-        if (!wrap.matches(":hover") && !mediaEl.matches(":hover")) {
+        if (!wrap.matches(":hover") && !container.matches(":hover")) {
           wrap.classList.remove(VISIBLE_CLASS);
         }
-      }, 200);
+      }, 300);
     };
 
+    container.addEventListener("mouseenter", show);
+    container.addEventListener("mouseleave", hide);
     mediaEl.addEventListener("mouseenter", show);
     mediaEl.addEventListener("mouseleave", hide);
     wrap.addEventListener("mouseenter", show);
     wrap.addEventListener("mouseleave", hide);
 
-    // Also watch for src changes on video — capture poster thumbnail too
+    // Watch for src changes on video
     if (isVideo) {
       const srcObs = new MutationObserver(() => {
         const s = mediaEl.currentSrc || mediaEl.src || "";
@@ -265,7 +252,6 @@
     btn.disabled = true;
     btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
 
-    // Get highest resolution: try srcset first, then src
     let url = getBestImageUrl(img);
     if (!url) {
       showStatus(btn, prev, "No image found", 2000);
@@ -282,7 +268,6 @@
   }
 
   function getBestImageUrl(img) {
-    // Check srcset for highest resolution
     const srcset = img.getAttribute("srcset");
     if (srcset) {
       const candidates = srcset.split(",").map((s) => {
@@ -305,26 +290,20 @@
     try {
       let url = "";
 
-      // Strategy 1 (primary): video element's src — specific to THIS video
+      // Strategy 1: video element's src
       url = getNonBlobSrc(video);
 
-      // Strategy 2: look in parent article/post data for direct URL
-      if (!url) {
-        url = findVideoUrlInPost(video);
-      }
+      // Strategy 2: parent article/post data
+      if (!url) url = findVideoUrlInPost(video);
 
-      // Strategy 3: from SSR JSON scripts near this video
-      if (!url) {
-        url = findVideoUrlFromScriptsNear(video);
-      }
+      // Strategy 3: SSR JSON scripts near this video
+      if (!url) url = findVideoUrlFromScriptsNear(video);
 
-      // Strategy 4: network-captured CDN URLs — fall back only if no direct URL found
+      // Strategy 4: network-captured CDN URLs
       if (!url) {
         const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
         const capturedUrls = captured?.urls || [];
-        if (capturedUrls.length) {
-          url = capturedUrls[capturedUrls.length - 1];
-        }
+        if (capturedUrls.length) url = capturedUrls[capturedUrls.length - 1];
       }
 
       // Strategy 5: embed endpoint fallback
@@ -353,9 +332,7 @@
     }
   }
 
-  // ── Find video URL from parent article/post element ──
   function findVideoUrlInPost(video) {
-    // Walk up from the video to find a post/article container
     let node = video;
     for (let i = 0; i < 10 && node; i++) {
       const url = node.dataset?.videoUrl || node.dataset?.video_url;
@@ -364,13 +341,10 @@
       }
       node = node.parentElement;
     }
-    // Try: find adjacent JSON script in parent tree
     return "";
   }
 
-  // ── Find video URL from SSR JSON near the video element ──
   function findVideoUrlFromScriptsNear(video) {
-    // Find the post/article container
     let postNode = video;
     for (let i = 0; i < 10 && postNode; i++) {
       if (postNode.tagName === "ARTICLE" || postNode.tagName === "SECTION" ||
@@ -381,13 +355,11 @@
     }
     if (!postNode) return "";
 
-    // Look for JSON scripts inside or near this post
     const scripts = postNode.querySelectorAll ? postNode.querySelectorAll('script[type="application/json"]') : [];
     for (const script of scripts) {
       try {
         const urls = [];
         findMediaUrls(JSON.parse(script.textContent), urls, 0);
-        // Return first video URL found in this post's scripts
         for (const item of urls) {
           if (item.type === "video" && item.url) return item.url;
         }
@@ -429,11 +401,8 @@
   }
 
   function cleanup() {
-    // Remove all overlay wrappers
     document.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
-    // Remove processed markers so elements are re-scanned on new page
     document.querySelectorAll(`[${PROCESSED}]`).forEach((el) => el.removeAttribute(PROCESSED));
-    // Reset per-page timer state
     if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
   }
 

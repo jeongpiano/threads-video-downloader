@@ -10,14 +10,11 @@
   pointer-events: none;
 }
 
-/* Video button: top-right, always visible (on the video element itself) */
+/* Video button: top-right corner */
 .tmd-wrap.tmd-video {
   right: 10px;
   top: 10px;
   bottom: auto;
-  opacity: 1;
-  transform: translateY(0);
-  /* Video element is the container, so button sits on top at corner */
 }
 
 /* Fully visible on hover */
@@ -25,9 +22,10 @@
 .tmd-wrap.tmd-visible {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
-/* The BUTTON itself is always clickable */
+/* The BUTTON itself is always clickable when visible */
 .tmd-wrap .tmd-btn {
   pointer-events: auto;
 }
@@ -36,6 +34,13 @@
 .tmd-wrap:has(button:disabled) {
   opacity: 1 !important;
   transform: translateY(0) !important;
+  pointer-events: auto !important;
+}
+
+/* ── Fullscreen support ── */
+*:fullscreen .tmd-wrap,
+*:-webkit-full-screen .tmd-wrap {
+  z-index: 2147483647;
 }
 
 /* ── Download button ── */
