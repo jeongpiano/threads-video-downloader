@@ -1,4 +1,4 @@
-/* ── Button wrapper — always top-right of container ── */
+/* ── Button wrapper — always top-right ── */
 .tmd-wrap {
   position: absolute;
   right: 8px;
@@ -10,7 +10,7 @@
   pointer-events: none;
 }
 
-/* Fully visible on hover */
+/* Visible on hover */
 .tmd-wrap:hover,
 .tmd-wrap.tmd-visible {
   opacity: 1;
@@ -18,25 +18,26 @@
   pointer-events: auto;
 }
 
-/* The BUTTON itself is always clickable when visible */
 .tmd-wrap .tmd-btn {
   pointer-events: auto;
 }
 
-/* Keep button visible while downloading/showing status */
+/* Keep visible during download */
 .tmd-wrap:has(button:disabled) {
   opacity: 1 !important;
   transform: translateY(0) !important;
   pointer-events: auto !important;
 }
 
-/* ── Fullscreen support ── */
+/* ── Fullscreen: always show button ── */
 :fullscreen .tmd-wrap,
-:-webkit-full-screen .tmd-wrap {
-  z-index: 2147483647;
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
+:-webkit-full-screen .tmd-wrap,
+*:fullscreen .tmd-wrap,
+*:-webkit-full-screen .tmd-wrap {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+  pointer-events: auto !important;
+  z-index: 2147483647 !important;
 }
 
 /* ── Download button ── */
@@ -78,7 +79,6 @@
   flex-shrink: 0;
 }
 
-/* ── Spinner ── */
 @keyframes tmd-spin {
   to { transform: rotate(360deg); }
 }

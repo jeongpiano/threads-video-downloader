@@ -6,7 +6,6 @@
   const BTN_CLASS = "tmd-btn";
   const VISIBLE_CLASS = "tmd-visible";
 
-  // CDN domains used by Threads/Instagram
   const CDN_PATTERN = /cdninstagram\.com|fbcdn\.net/;
 
   let lastUrl = location.href;
@@ -19,11 +18,8 @@
     extractVideoUrlsFromScripts();
     scheduleScan();
 
-    // MutationObserver: DOM structure changes
     const obs = new MutationObserver(() => {
-      if (location.href !== lastUrl) {
-        onNavigate();
-      }
+      if (location.href !== lastUrl) onNavigate();
       scheduleScan();
     });
     obs.observe(document.body || document.documentElement, {
@@ -31,7 +27,6 @@
       subtree: true
     });
 
-    // History API: SPA navigation
     const origPushState = history.pushState;
     const origReplaceState = history.replaceState;
     history.pushState = function (...args) {
@@ -49,42 +44,72 @@
       if (location.href !== lastUrl) onNavigate();
     });
 
-    // Fullscreen: re-scan to inject buttons inside fullscreen container
-    document.addEventListener("fullscreenchange", () => {
-      // Small delay to let fullscreen element settle
-      setTimeout(() => {
-        rescanFullscreen();
-        scheduleScan();
-      }, 300);
-    });
-    document.addEventListener("webkitfullscreenchange", () => {
-      setTimeout(() => {
-        rescanFullscreen();
-        scheduleScan();
-      }, 300);
-    });
+    // Fullscreen
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
   }
 
-  // Re-scan specifically inside fullscreen element
-  function rescanFullscreen() {
+  function onFullscreenChange() {
     const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-    if (!fsEl) return;
-    // Remove processed marks inside fullscreen so they get re-scanned
-    fsEl.querySelectorAll(`[${PROCESSED}]`).forEach((el) => {
-      el.removeAttribute(PROCESSED);
-    });
-    fsEl.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
+    if (fsEl) {
+      // Entering fullscreen: clean and re-inject inside fullscreen element
+      fsEl.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
+      fsEl.querySelectorAll(`[${PROCESSED}]`).forEach((el) => el.removeAttribute(PROCESSED));
+      // Delay to let fullscreen render settle
+      setTimeout(() => scanInside(fsEl), 400);
+      setTimeout(() => scanInside(fsEl), 1000);
+      setTimeout(() => scanInside(fsEl), 2000);
+    } else {
+      // Exiting fullscreen: normal re-scan
+      scheduleScan();
+    }
+  }
+
+  // Scan specifically within a root element (for fullscreen)
+  function scanInside(root) {
+    for (const video of root.querySelectorAll("video")) {
+      if (video.hasAttribute(PROCESSED)) continue;
+      video.setAttribute(PROCESSED, "video");
+      // In fullscreen, use the fullscreen element itself or closest large parent
+      const container = findContainerInFullscreen(video, root);
+      if (container) attachOverlay(container, video, "video");
+    }
+    for (const img of root.querySelectorAll("img")) {
+      if (img.hasAttribute(PROCESSED)) continue;
+      const src = img.src || img.currentSrc || "";
+      if (!src || !CDN_PATTERN.test(src)) continue;
+      if (src.includes("/t51.2885-19/")) continue;
+      const rect = img.getBoundingClientRect();
+      if (rect.width < 80 || rect.height < 80) continue;
+
+      img.setAttribute(PROCESSED, "image");
+      const isVideo = hasVideoNearby(img);
+      const container = findContainerInFullscreen(img, root);
+      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
+    }
+  }
+
+  function findContainerInFullscreen(el, fsRoot) {
+    // Walk up but don't go past the fullscreen root
+    let node = el.parentElement;
+    for (let i = 0; i < 8 && node && node !== fsRoot; i++) {
+      const r = node.getBoundingClientRect();
+      if (r.width >= 80 && r.height >= 80) return node;
+      node = node.parentElement;
+    }
+    // If we reached fsRoot, use it
+    if (getComputedStyle(fsRoot).position === "static") {
+      fsRoot.style.position = "relative";
+    }
+    return fsRoot;
   }
 
   function onNavigate() {
     if (isNavigating) return;
     isNavigating = true;
     lastUrl = location.href;
-
     if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
-
     cleanup();
-
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         extractVideoUrlsFromScripts();
@@ -98,9 +123,7 @@
   function extractVideoUrlsFromScripts() {
     const media = [];
     for (const script of document.querySelectorAll('script[type="application/json"]')) {
-      try {
-        findMediaUrls(JSON.parse(script.textContent), media, 0);
-      } catch { /* skip */ }
+      try { findMediaUrls(JSON.parse(script.textContent), media, 0); } catch {}
     }
     if (media.length) {
       media.sort((a, b) => a.y - b.y);
@@ -127,9 +150,7 @@
       if (cands.length) {
         const sorted = [...cands].sort((a, b) => (b.width || 0) - (a.width || 0));
         const best = sorted[0] || cands[0];
-        if (best.url) {
-          out.push({ url: best.url, type: "image", thumb: best.url, y: out.length });
-        }
+        if (best.url) out.push({ url: best.url, type: "image", thumb: best.url, y: out.length });
       }
       return;
     }
@@ -145,64 +166,99 @@
   // ── DOM scan ──
   function scheduleScan() {
     if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(() => {
-      scanTimer = null;
-      scan();
-    }, 600);
+    scanTimer = setTimeout(() => { scanTimer = null; scan(); }, 600);
   }
 
   function scan() {
-    // Determine if we're in fullscreen
-    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-    const scanRoot = fsEl || document;
+    // Don't scan main document if we're in fullscreen (handled by scanInside)
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
 
-    // Videos
-    for (const video of scanRoot.querySelectorAll("video")) {
+    // Videos first
+    for (const video of document.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
       const container = findMediaContainer(video);
-      if (container) attachOverlay(container, video, "video");
+      if (container) {
+        // Mark container so img scan skips it
+        container.setAttribute("data-tmd-has-video", "1");
+        attachOverlay(container, video, "video");
+      }
     }
 
-    // Images – only large CDN images
-    for (const img of scanRoot.querySelectorAll("img")) {
+    // Images
+    for (const img of document.querySelectorAll("img")) {
       if (img.hasAttribute(PROCESSED)) continue;
       const src = img.src || img.currentSrc || "";
       if (!src || !CDN_PATTERN.test(src)) continue;
       const rect = img.getBoundingClientRect();
       if (rect.width < 80 || rect.height < 80) continue;
-      if (src.includes("/t51.2885-19/")) continue; // profile pic
+      if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
+
+      // Check: is this actually a video post?
+      const isVideo = hasVideoNearby(img);
       const container = findMediaContainer(img);
-      if (container) attachOverlay(container, img, "image");
+
+      // If container already has a video button, skip adding another
+      if (container?.getAttribute("data-tmd-has-video") === "1") continue;
+
+      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
     }
   }
 
-  // Unified container finder for both video and image
-  // Walks up to find a positioned parent that wraps the media
+  // Detect if an img is actually part of a video post
+  // Threads renders video poster as <img> with a <video> sibling or nearby
+  function hasVideoNearby(img) {
+    // Check: does any ancestor (up to 6 levels) contain a <video> element?
+    let node = img;
+    for (let i = 0; i < 6 && node; i++) {
+      node = node.parentElement;
+      if (!node) break;
+      // Direct video sibling or child
+      if (node.querySelector("video")) return true;
+      // Threads uses audio icon SVG for video posts — look for speaker/mute icon
+      const svgs = node.querySelectorAll("svg");
+      for (const svg of svgs) {
+        const paths = svg.innerHTML || "";
+        // Speaker icon patterns (mute/unmute) indicate video
+        if (paths.includes("M11") && paths.includes("M16") || // common speaker path
+            svg.getAttribute("aria-label")?.toLowerCase().includes("audio") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("mute") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("sound") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("소리") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("음소거")) {
+          return true;
+        }
+      }
+      // Check for volume/speaker button
+      const buttons = node.querySelectorAll("button, [role='button']");
+      for (const btn of buttons) {
+        const label = (btn.getAttribute("aria-label") || "").toLowerCase();
+        if (label.includes("mute") || label.includes("unmute") ||
+            label.includes("sound") || label.includes("audio") ||
+            label.includes("음소거") || label.includes("소리")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function findMediaContainer(el) {
     let node = el.parentElement;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
-      if (r.width >= 80 && r.height >= 80) {
-        return node;
-      }
+      if (r.width >= 80 && r.height >= 80) return node;
       node = node.parentElement;
     }
     return el.parentElement;
-  }
-
-  // ── Detect if element is a video ──
-  function isVideoElement(el) {
-    return el.tagName === "VIDEO";
   }
 
   // ── Overlay button ──
   function attachOverlay(container, mediaEl, mediaType) {
     const isVideo = mediaType === "video";
 
-    // Ensure container is positionable
     if (getComputedStyle(container).position === "static") {
       container.style.position = "relative";
     }
@@ -223,7 +279,9 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       if (isVideo) {
-        downloadVideo(mediaEl, btn);
+        // Find the actual <video> element if we attached to an img
+        const actualVideo = mediaEl.tagName === "VIDEO" ? mediaEl : findNearestVideo(mediaEl);
+        downloadVideo(actualVideo || mediaEl, btn);
       } else {
         downloadImage(mediaEl, btn);
       }
@@ -232,7 +290,7 @@
     wrap.appendChild(btn);
     container.appendChild(wrap);
 
-    // JS-based hover
+    // Hover behavior
     const show = () => wrap.classList.add(VISIBLE_CLASS);
     const hide = () => {
       setTimeout(() => {
@@ -249,8 +307,8 @@
     wrap.addEventListener("mouseenter", show);
     wrap.addEventListener("mouseleave", hide);
 
-    // Watch for src changes on video
-    if (isVideo) {
+    // Watch video src changes
+    if (mediaEl.tagName === "VIDEO") {
       const srcObs = new MutationObserver(() => {
         const s = mediaEl.currentSrc || mediaEl.src || "";
         const poster = mediaEl.poster || "";
@@ -264,6 +322,18 @@
     }
   }
 
+  // Find the nearest <video> element relative to an img
+  function findNearestVideo(img) {
+    let node = img;
+    for (let i = 0; i < 6 && node; i++) {
+      node = node.parentElement;
+      if (!node) break;
+      const v = node.querySelector("video");
+      if (v) return v;
+    }
+    return null;
+  }
+
   // ── Download: Image ──
   async function downloadImage(img, btn) {
     const prev = btn.innerHTML;
@@ -271,18 +341,11 @@
     btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
 
     let url = getBestImageUrl(img);
-    if (!url) {
-      showStatus(btn, prev, "No image found", 2000);
-      return;
-    }
+    if (!url) { showStatus(btn, prev, "No image found", 2000); return; }
 
     const filename = buildFilename("jpg");
     const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
-    if (resp?.ok) {
-      showStatus(btn, prev, `${ICON_CHECK}<span>Saved!</span>`, 2500);
-    } else {
-      showStatus(btn, prev, "<span>Failed</span>", 2000);
-    }
+    showStatus(btn, prev, resp?.ok ? `${ICON_CHECK}<span>Saved!</span>` : "<span>Failed</span>", 2500);
   }
 
   function getBestImageUrl(img) {
@@ -290,8 +353,7 @@
     if (srcset) {
       const candidates = srcset.split(",").map((s) => {
         const parts = s.trim().split(/\s+/);
-        const w = parseInt(parts[1]) || 0;
-        return { url: parts[0], w };
+        return { url: parts[0], w: parseInt(parts[1]) || 0 };
       });
       candidates.sort((a, b) => b.w - a.w);
       if (candidates[0]?.url) return candidates[0].url;
@@ -308,23 +370,23 @@
     try {
       let url = "";
 
-      // Strategy 1: video element's src
-      url = getNonBlobSrc(video);
+      // Strategy 1: video src
+      if (video.tagName === "VIDEO") url = getNonBlobSrc(video);
 
-      // Strategy 2: parent article/post data
+      // Strategy 2: parent post data
       if (!url) url = findVideoUrlInPost(video);
 
-      // Strategy 3: SSR JSON scripts near this video
+      // Strategy 3: SSR JSON
       if (!url) url = findVideoUrlFromScriptsNear(video);
 
-      // Strategy 4: network-captured CDN URLs
+      // Strategy 4: network-captured
       if (!url) {
         const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
         const capturedUrls = captured?.urls || [];
         if (capturedUrls.length) url = capturedUrls[capturedUrls.length - 1];
       }
 
-      // Strategy 5: embed endpoint fallback
+      // Strategy 5: embed fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
@@ -332,55 +394,41 @@
         if (embedUrls.length) url = embedUrls[0];
       }
 
-      if (!url) {
-        showStatus(btn, prev, "No video found", 2500);
-        return;
-      }
+      if (!url) { showStatus(btn, prev, "No video found", 2500); return; }
 
       const filename = buildFilename("mp4");
       const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
-      if (resp?.ok) {
-        showStatus(btn, prev, `${ICON_CHECK}<span>Saved!</span>`, 2500);
-      } else {
-        showStatus(btn, prev, "<span>Failed</span>", 2500);
-      }
+      showStatus(btn, prev, resp?.ok ? `${ICON_CHECK}<span>Saved!</span>` : "<span>Failed</span>", 2500);
     } catch (err) {
       console.error("[TMD]", err);
       showStatus(btn, prev, "<span>Error</span>", 2000);
     }
   }
 
-  function findVideoUrlInPost(video) {
-    let node = video;
+  function findVideoUrlInPost(el) {
+    let node = el;
     for (let i = 0; i < 10 && node; i++) {
       const url = node.dataset?.videoUrl || node.dataset?.video_url;
-      if (url && !url.startsWith("blob:") && (url.includes(".mp4") || url.includes("/v/"))) {
-        return url;
-      }
+      if (url && !url.startsWith("blob:") && (url.includes(".mp4") || url.includes("/v/"))) return url;
       node = node.parentElement;
     }
     return "";
   }
 
-  function findVideoUrlFromScriptsNear(video) {
-    let postNode = video;
+  function findVideoUrlFromScriptsNear(el) {
+    let postNode = el;
     for (let i = 0; i < 10 && postNode; i++) {
       if (postNode.tagName === "ARTICLE" || postNode.tagName === "SECTION" ||
-          (postNode.id && /post|thread|item|entry/i.test(postNode.id))) {
-        break;
-      }
+          (postNode.id && /post|thread|item|entry/i.test(postNode.id))) break;
       postNode = postNode.parentElement;
     }
     if (!postNode) return "";
-
-    const scripts = postNode.querySelectorAll ? postNode.querySelectorAll('script[type="application/json"]') : [];
+    const scripts = postNode.querySelectorAll('script[type="application/json"]');
     for (const script of scripts) {
       try {
         const urls = [];
         findMediaUrls(JSON.parse(script.textContent), urls, 0);
-        for (const item of urls) {
-          if (item.type === "video" && item.url) return item.url;
-        }
+        for (const item of urls) { if (item.type === "video" && item.url) return item.url; }
       } catch {}
     }
     return "";
@@ -397,7 +445,6 @@
     return "";
   }
 
-  // ── Helpers ──
   function buildFilename(ext) {
     const parts = location.pathname.split("/").filter(Boolean);
     const postIdx = parts.indexOf("post");
@@ -421,10 +468,10 @@
   function cleanup() {
     document.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
     document.querySelectorAll(`[${PROCESSED}]`).forEach((el) => el.removeAttribute(PROCESSED));
+    document.querySelectorAll("[data-tmd-has-video]").forEach((el) => el.removeAttribute("data-tmd-has-video"));
     if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
   }
 
-  // ── Inline SVG icons ──
   const ICON_VIDEO_DL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
   const ICON_IMG_DL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
   const ICON_CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
