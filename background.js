@@ -66,6 +66,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 const handlers = {
+  async PROXY_IMAGE(msg, _s, respond) {
+    try {
+      const res = await fetch(msg.url, {
+        headers: { "Referer": "https://www.threads.com/" }
+      });
+      if (!res.ok) { respond({ ok: false }); return; }
+      const blob = await res.blob();
+      const reader = new FileReader();
+      reader.onloadend = () => respond({ ok: true, dataUrl: reader.result });
+      reader.onerror = () => respond({ ok: false });
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      respond({ ok: false });
+    }
+  },
+
   GET_CAPTURED_URLS(msg, sender, respond) {
     const tabId = msg.tabId || sender.tab?.id;
     const tab = tabId ? capturedMedia.get(tabId) : null;

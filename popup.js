@@ -118,6 +118,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   content.innerHTML = html;
 
+  // Load thumbnails via background proxy (bypasses CDN referer block)
+  content.querySelectorAll(".media-thumb img[data-proxy-src]").forEach(async (img) => {
+    const url = img.getAttribute("data-proxy-src");
+    if (!url) return;
+    try {
+      const r = await chrome.runtime.sendMessage({ type: "PROXY_IMAGE", url });
+      if (r?.ok && r.dataUrl) {
+        img.src = r.dataUrl;
+        img.style.display = "";
+      } else {
+        img.style.display = "none";
+        const placeholder = img.nextElementSibling;
+        if (placeholder) placeholder.style.display = "flex";
+      }
+    } catch {
+      img.style.display = "none";
+      const placeholder = img.nextElementSibling;
+      if (placeholder) placeholder.style.display = "flex";
+    }
+  });
+
   // Individual buttons
   content.querySelectorAll(".dl-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -308,7 +329,8 @@ function mediaItem(url, idx, type, label, thumbUrl) {
 
   let thumbHtml;
   if (thumbUrl) {
-    thumbHtml = `<img src="${esc(thumbUrl)}" alt="${label}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="thumb-placeholder" style="display:none">${placeholderIcon(type)}</div>`;
+    // Use data-proxy-src: background.js will fetch with proper Referer and set src as dataUrl
+    thumbHtml = `<img data-proxy-src="${esc(thumbUrl)}" alt="${label}" style="display:none"><div class="thumb-placeholder">${placeholderIcon(type)}</div>`;
   } else {
     thumbHtml = `<div class="thumb-placeholder">${placeholderIcon(type)}</div>`;
   }
