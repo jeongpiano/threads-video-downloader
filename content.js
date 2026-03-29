@@ -234,26 +234,52 @@
     }
   }
 
-  // Check if this specific image is a video poster (not just near a video in carousel)
+  // Check if this specific image is a video poster
+  // Key insight: in carousel, each item is inside its own <button>.
+  // If img is inside a <button> that has NO <video>, it's a photo.
   function hasVideoNearby(img) {
-    // Only check 2 levels up — enough for video poster wrapper, but not carousel-wide
+    // First: check if img is inside a carousel item button
+    // Carousel structure: button > div > img (each media in its own button)
+    const parentBtn = img.closest("button");
+    if (parentBtn) {
+      // If this button contains a video, it's a video item
+      if (parentBtn.querySelector("video")) return true;
+      // If this button has aria-label starting with "May be" or contains image description
+      // it's a carousel photo item — definitely not video
+      const label = parentBtn.getAttribute("aria-label") || "";
+      if (label.startsWith("May be") || label.includes("image of")) return false;
+      // If the button has "Video player" label, it's video
+      if (label.toLowerCase().includes("video")) return true;
+    }
+
+    // Fallback: check 3 levels up for video sibling and mute controls
     let node = img;
-    for (let i = 0; i < 2 && node; i++) {
+    for (let i = 0; i < 3 && node; i++) {
       node = node.parentElement;
       if (!node) break;
 
-      // Direct sibling or child <video> means this img IS the poster
-      const video = node.querySelector(":scope > video, :scope > div > video");
-      if (video) return true;
+      // Check for <video> as sibling (same level, not deep in other branches)
+      for (const child of node.children) {
+        if (child.tagName === "VIDEO") return true;
+        // One level deeper
+        if (child !== img && child.querySelector && child.querySelector(":scope > video")) return true;
+      }
 
-      // Audio/mute button as DIRECT child of this container = video controls
-      for (const btn of node.querySelectorAll(":scope > button, :scope > div > button, :scope > [role='button']")) {
-        const label = (btn.getAttribute("aria-label") || "").toLowerCase();
-        if (label.includes("mute") || label.includes("unmute") ||
-            label.includes("sound") || label.includes("audio") ||
-            label.includes("음소거") || label.includes("소리") ||
-            label.includes("오디오")) {
-          return true;
+      // Check for mute/audio button as sibling
+      for (const child of node.children) {
+        if (child.tagName === "BUTTON" || child.getAttribute?.("role") === "button") {
+          const lbl = (child.getAttribute("aria-label") || "").toLowerCase();
+          if (lbl.includes("mute") || lbl.includes("unmute") ||
+              lbl.includes("sound") || lbl.includes("audio") ||
+              lbl.includes("음소거") || lbl.includes("소리") ||
+              lbl.includes("오디오")) {
+            return true;
+          }
+        }
+        // Check group "Video player" sibling
+        if (child.getAttribute?.("role") === "group") {
+          const groupLabel = (child.getAttribute("aria-label") || "").toLowerCase();
+          if (groupLabel.includes("video")) return true;
         }
       }
     }
