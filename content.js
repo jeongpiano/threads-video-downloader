@@ -48,51 +48,46 @@
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
 
-    // Threads CSS overlay detection: watch for large fixed/absolute overlays
-    // that contain video (Threads "fullscreen" is a modal, not browser fullscreen)
-    setInterval(detectOverlayVideos, 1500);
+    // Periodic re-check: catches Threads /media view, overlay modals, 
+    // and any dynamically injected videos that MutationObserver misses
+    setInterval(() => {
+      // Check URL change (Threads SPA sometimes doesn't trigger popstate)
+      if (location.href !== lastUrl) {
+        onNavigate();
+        return;
+      }
+      // Find any unprocessed videos and large images
+      detectNewMedia();
+    }, 1200);
   }
 
-  // Detect Threads modal/overlay that acts as "fullscreen" video viewer
-  function detectOverlayVideos() {
-    // Find elements that look like fullscreen overlays:
-    // - position: fixed
-    // - covers most of viewport
-    // - contains a video
-    const candidates = document.querySelectorAll("div[role='dialog'], div[style*='position: fixed'], div[style*='position:fixed']");
-    for (const el of candidates) {
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      const isOverlay = (style.position === "fixed" || style.position === "absolute") &&
-                        rect.width > window.innerWidth * 0.7 &&
-                        rect.height > window.innerHeight * 0.7;
-      if (!isOverlay) continue;
-
-      const videos = el.querySelectorAll("video");
-      for (const video of videos) {
-        if (video.hasAttribute(PROCESSED)) continue;
-        video.setAttribute(PROCESSED, "video");
-        const container = findMediaContainer(video);
-        if (container) {
-          container.setAttribute("data-tmd-has-video", "1");
-          attachOverlay(container, video, "video");
-        }
+  // Detect any unprocessed media — covers /media view, overlays, lazy-loaded content
+  function detectNewMedia() {
+    // Any unprocessed video on the page
+    for (const video of document.querySelectorAll("video")) {
+      if (video.hasAttribute(PROCESSED)) continue;
+      video.setAttribute(PROCESSED, "video");
+      const container = findMediaContainer(video);
+      if (container) {
+        container.setAttribute("data-tmd-has-video", "1");
+        attachOverlay(container, video, "video");
       }
     }
 
-    // Also check: any video element that is very large (covers >60% of viewport)
-    // This catches Threads expanded video even without a dialog role
-    for (const video of document.querySelectorAll("video")) {
-      if (video.hasAttribute(PROCESSED)) continue;
-      const rect = video.getBoundingClientRect();
-      if (rect.width > window.innerWidth * 0.5 && rect.height > window.innerHeight * 0.4) {
-        video.setAttribute(PROCESSED, "video");
-        const container = findMediaContainer(video);
-        if (container) {
-          container.setAttribute("data-tmd-has-video", "1");
-          attachOverlay(container, video, "video");
-        }
-      }
+    // Any unprocessed large CDN image
+    for (const img of document.querySelectorAll("img")) {
+      if (img.hasAttribute(PROCESSED)) continue;
+      const src = img.src || img.currentSrc || "";
+      if (!src || !CDN_PATTERN.test(src)) continue;
+      const rect = img.getBoundingClientRect();
+      if (rect.width < 80 || rect.height < 80) continue;
+      if (src.includes("/t51.2885-19/")) continue;
+
+      img.setAttribute(PROCESSED, "image");
+      const isVideo = hasVideoNearby(img);
+      const container = findMediaContainer(img);
+      if (container?.getAttribute("data-tmd-has-video") === "1") continue;
+      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
     }
   }
 
