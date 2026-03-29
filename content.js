@@ -74,7 +74,7 @@
       }
     }
 
-    // Any unprocessed large CDN image
+    // Any unprocessed large CDN image — always "Photo"
     for (const img of document.querySelectorAll("img")) {
       if (img.hasAttribute(PROCESSED)) continue;
       const src = img.src || img.currentSrc || "";
@@ -84,10 +84,9 @@
       if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
-      const isVideo = hasVideoNearby(img);
       const container = findMediaContainer(img);
       if (container?.getAttribute("data-tmd-has-video") === "1") continue;
-      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
+      if (container) attachOverlay(container, img, "image");
     }
   }
 
@@ -119,9 +118,8 @@
       const rect = img.getBoundingClientRect();
       if (rect.width < 80 || rect.height < 80) continue;
       img.setAttribute(PROCESSED, "image");
-      const isVideo = hasVideoNearby(img);
       const container = findContainerInFullscreen(img, root);
-      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
+      if (container) attachOverlay(container, img, "image");
     }
   }
 
@@ -217,7 +215,7 @@
       }
     }
 
-    // Images
+    // Images — always "Photo". Video detection is done by <video> tag only.
     for (const img of document.querySelectorAll("img")) {
       if (img.hasAttribute(PROCESSED)) continue;
       const src = img.src || img.currentSrc || "";
@@ -227,64 +225,14 @@
       if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
-      const isVideo = hasVideoNearby(img);
       const container = findMediaContainer(img);
       if (container?.getAttribute("data-tmd-has-video") === "1") continue;
-      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
+      if (container) attachOverlay(container, img, "image");
     }
   }
 
-  // Check if this specific image is a video poster
-  // Key insight: in carousel, each item is inside its own <button>.
-  // If img is inside a <button> that has NO <video>, it's a photo.
-  function hasVideoNearby(img) {
-    // First: check if img is inside a carousel item button
-    // Carousel structure: button > div > img (each media in its own button)
-    const parentBtn = img.closest("button");
-    if (parentBtn) {
-      // If this button contains a video, it's a video item
-      if (parentBtn.querySelector("video")) return true;
-      // If this button has aria-label starting with "May be" or contains image description
-      // it's a carousel photo item — definitely not video
-      const label = parentBtn.getAttribute("aria-label") || "";
-      if (label.startsWith("May be") || label.includes("image of")) return false;
-      // If the button has "Video player" label, it's video
-      if (label.toLowerCase().includes("video")) return true;
-    }
-
-    // Fallback: check 3 levels up for video sibling and mute controls
-    let node = img;
-    for (let i = 0; i < 3 && node; i++) {
-      node = node.parentElement;
-      if (!node) break;
-
-      // Check for <video> as sibling (same level, not deep in other branches)
-      for (const child of node.children) {
-        if (child.tagName === "VIDEO") return true;
-        // One level deeper
-        if (child !== img && child.querySelector && child.querySelector(":scope > video")) return true;
-      }
-
-      // Check for mute/audio button as sibling
-      for (const child of node.children) {
-        if (child.tagName === "BUTTON" || child.getAttribute?.("role") === "button") {
-          const lbl = (child.getAttribute("aria-label") || "").toLowerCase();
-          if (lbl.includes("mute") || lbl.includes("unmute") ||
-              lbl.includes("sound") || lbl.includes("audio") ||
-              lbl.includes("음소거") || lbl.includes("소리") ||
-              lbl.includes("오디오")) {
-            return true;
-          }
-        }
-        // Check group "Video player" sibling
-        if (child.getAttribute?.("role") === "group") {
-          const groupLabel = (child.getAttribute("aria-label") || "").toLowerCase();
-          if (groupLabel.includes("video")) return true;
-        }
-      }
-    }
-    return false;
-  }
+  // Removed hasVideoNearby — too unreliable for Threads' complex carousel/feed structure.
+  // Rule: <video> tag = "Video" button, <img> tag = "Photo" button. Simple and correct.
 
   function findMediaContainer(el) {
     let node = el.parentElement;
@@ -330,8 +278,7 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       if (isVideo) {
-        const actualVideo = mediaEl.tagName === "VIDEO" ? mediaEl : findNearestVideo(mediaEl);
-        downloadVideo(actualVideo || mediaEl, btn);
+        downloadVideo(mediaEl, btn);
       } else {
         downloadImage(mediaEl, btn);
       }
@@ -369,18 +316,6 @@
       srcObs.observe(mediaEl, { attributes: true, attributeFilter: ["src"] });
     }
   }
-
-  function findNearestVideo(img) {
-    let node = img;
-    for (let i = 0; i < 6 && node; i++) {
-      node = node.parentElement;
-      if (!node) break;
-      const v = node.querySelector("video");
-      if (v) return v;
-    }
-    return null;
-  }
-
   // ── Download: Image ──
   async function downloadImage(img, btn) {
     const prev = btn.innerHTML;
