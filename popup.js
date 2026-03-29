@@ -3,8 +3,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   const status = document.getElementById("status");
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url?.includes("threads.com")) {
-    status.textContent = "Threads 페이지에서 사용해주세요.";
+  const isThreads = tab?.url?.includes("threads.com");
+  const isIG = tab?.url?.includes("instagram.com");
+  if (!isThreads && !isIG) {
+    status.textContent = "Threads 또는 Instagram 페이지에서 사용해주세요.";
     return;
   }
 
@@ -68,7 +70,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return;
   }
 
-  const postId = extractPostId(tab.url);
+  const postId = extractPostId(tab.url, isIG);
 
   // Build combined media list
   const allMedia = [
@@ -146,7 +148,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       const m = allMedia[idx];
       btn.disabled = true;
       btn.textContent = "...";
-      const filename = `threads/${postId}_${idx + 1}.${m.ext}`;
+      const prefix = isIG ? "instagram" : "threads";
+      const filename = `${prefix}/${postId}_${idx + 1}.${m.ext}`;
       const r = await chrome.runtime.sendMessage({ type: "DOWNLOAD_MEDIA", url: m.url, filename });
       btn.textContent = r?.ok ? "Done!" : "Failed";
       if (r?.ok) btn.className = "dl-btn done";
@@ -161,7 +164,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     b.textContent = "다운로드 중...";
     for (let i = 0; i < allMedia.length; i++) {
       const m = allMedia[i];
-      const filename = `threads/${postId}_${i + 1}.${m.ext}`;
+      const prefix = isIG ? "instagram" : "threads";
+      const filename = `${prefix}/${postId}_${i + 1}.${m.ext}`;
       await chrome.runtime.sendMessage({ type: "DOWNLOAD_MEDIA", url: m.url, filename });
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -358,8 +362,14 @@ function shortUrl(url) {
   catch { return "media"; }
 }
 
-function extractPostId(url) {
+function extractPostId(url, isIG) {
   const p = new URL(url).pathname.split("/").filter(Boolean);
+  if (isIG) {
+    const pIdx = p.indexOf("p");
+    const rIdx = p.indexOf("reel");
+    const idx = pIdx !== -1 ? pIdx : rIdx;
+    return idx !== -1 && p[idx + 1] ? p[idx + 1] : "ig";
+  }
   const i = p.indexOf("post");
   return i !== -1 && p[i + 1] ? p[i + 1] : "threads";
 }
