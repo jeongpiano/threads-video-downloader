@@ -44,69 +44,33 @@
       if (location.href !== lastUrl) onNavigate();
     });
 
-    // Real browser fullscreen
+    // Fullscreen
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
-
-    // Periodic re-check: catches Threads /media view, overlay modals, 
-    // and any dynamically injected videos that MutationObserver misses
-    setInterval(() => {
-      // Check URL change (Threads SPA sometimes doesn't trigger popstate)
-      if (location.href !== lastUrl) {
-        onNavigate();
-        return;
-      }
-      // Find any unprocessed videos and large images
-      detectNewMedia();
-    }, 1200);
-  }
-
-  // Detect any unprocessed media — covers /media view, overlays, lazy-loaded content
-  function detectNewMedia() {
-    // Any unprocessed video on the page
-    for (const video of document.querySelectorAll("video")) {
-      if (video.hasAttribute(PROCESSED)) continue;
-      video.setAttribute(PROCESSED, "video");
-      const container = findMediaContainer(video);
-      if (container) {
-        container.setAttribute("data-tmd-has-video", "1");
-        attachOverlay(container, video, "video");
-      }
-    }
-
-    // Any unprocessed large CDN image — always "Photo"
-    for (const img of document.querySelectorAll("img")) {
-      if (img.hasAttribute(PROCESSED)) continue;
-      const src = img.src || img.currentSrc || "";
-      if (!src || !CDN_PATTERN.test(src)) continue;
-      const rect = img.getBoundingClientRect();
-      if (rect.width < 80 || rect.height < 80) continue;
-      if (src.includes("/t51.2885-19/")) continue;
-
-      img.setAttribute(PROCESSED, "image");
-      const container = findMediaContainer(img);
-      if (container?.getAttribute("data-tmd-has-video") === "1") continue;
-      if (container) attachOverlay(container, img, "image");
-    }
   }
 
   function onFullscreenChange() {
     const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
     if (fsEl) {
+      // Entering fullscreen: clean and re-inject inside fullscreen element
       fsEl.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
       fsEl.querySelectorAll(`[${PROCESSED}]`).forEach((el) => el.removeAttribute(PROCESSED));
+      // Delay to let fullscreen render settle
       setTimeout(() => scanInside(fsEl), 400);
       setTimeout(() => scanInside(fsEl), 1000);
       setTimeout(() => scanInside(fsEl), 2000);
     } else {
+      // Exiting fullscreen: normal re-scan
       scheduleScan();
     }
   }
 
+  // Scan specifically within a root element (for fullscreen)
   function scanInside(root) {
     for (const video of root.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
+      // In fullscreen, use the fullscreen element itself or closest large parent
       const container = findContainerInFullscreen(video, root);
       if (container) attachOverlay(container, video, "video");
     }
@@ -117,19 +81,23 @@
       if (src.includes("/t51.2885-19/")) continue;
       const rect = img.getBoundingClientRect();
       if (rect.width < 80 || rect.height < 80) continue;
+
       img.setAttribute(PROCESSED, "image");
+      const isVideo = hasVideoNearby(img);
       const container = findContainerInFullscreen(img, root);
-      if (container) attachOverlay(container, img, "image");
+      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
     }
   }
 
   function findContainerInFullscreen(el, fsRoot) {
+    // Walk up but don't go past the fullscreen root
     let node = el.parentElement;
     for (let i = 0; i < 8 && node && node !== fsRoot; i++) {
       const r = node.getBoundingClientRect();
       if (r.width >= 80 && r.height >= 80) return node;
       node = node.parentElement;
     }
+    // If we reached fsRoot, use it
     if (getComputedStyle(fsRoot).position === "static") {
       fsRoot.style.position = "relative";
     }
@@ -202,6 +170,7 @@
   }
 
   function scan() {
+    // Don't scan main document if we're in fullscreen (handled by scanInside)
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
 
     // Videos first
@@ -210,12 +179,13 @@
       video.setAttribute(PROCESSED, "video");
       const container = findMediaContainer(video);
       if (container) {
+        // Mark container so img scan skips it
         container.setAttribute("data-tmd-has-video", "1");
         attachOverlay(container, video, "video");
       }
     }
 
-    // Images — always "Photo". Video detection is done by <video> tag only.
+    // Images
     for (const img of document.querySelectorAll("img")) {
       if (img.hasAttribute(PROCESSED)) continue;
       const src = img.src || img.currentSrc || "";
@@ -225,33 +195,64 @@
       if (src.includes("/t51.2885-19/")) continue;
 
       img.setAttribute(PROCESSED, "image");
+
+      // Check: is this actually a video post?
+      const isVideo = hasVideoNearby(img);
       const container = findMediaContainer(img);
+
+      // If container already has a video button, skip adding another
       if (container?.getAttribute("data-tmd-has-video") === "1") continue;
-      if (container) attachOverlay(container, img, "image");
+
+      if (container) attachOverlay(container, img, isVideo ? "video" : "image");
     }
   }
 
-  // Removed hasVideoNearby — too unreliable for Threads' complex carousel/feed structure.
-  // Rule: <video> tag = "Video" button, <img> tag = "Photo" button. Simple and correct.
+  // Detect if an img is actually part of a video post
+  // Threads renders video poster as <img> with a <video> sibling or nearby
+  function hasVideoNearby(img) {
+    // Check: does any ancestor (up to 6 levels) contain a <video> element?
+    let node = img;
+    for (let i = 0; i < 6 && node; i++) {
+      node = node.parentElement;
+      if (!node) break;
+      // Direct video sibling or child
+      if (node.querySelector("video")) return true;
+      // Threads uses audio icon SVG for video posts — look for speaker/mute icon
+      const svgs = node.querySelectorAll("svg");
+      for (const svg of svgs) {
+        const paths = svg.innerHTML || "";
+        // Speaker icon patterns (mute/unmute) indicate video
+        if (paths.includes("M11") && paths.includes("M16") || // common speaker path
+            svg.getAttribute("aria-label")?.toLowerCase().includes("audio") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("mute") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("sound") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("소리") ||
+            svg.getAttribute("aria-label")?.toLowerCase().includes("음소거")) {
+          return true;
+        }
+      }
+      // Check for volume/speaker button
+      const buttons = node.querySelectorAll("button, [role='button']");
+      for (const btn of buttons) {
+        const label = (btn.getAttribute("aria-label") || "").toLowerCase();
+        if (label.includes("mute") || label.includes("unmute") ||
+            label.includes("sound") || label.includes("audio") ||
+            label.includes("음소거") || label.includes("소리")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   function findMediaContainer(el) {
     let node = el.parentElement;
-    let bestContainer = null;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
-      const style = getComputedStyle(node);
-      if (r.width >= 80 && r.height >= 80) {
-        // Pick the first good container, but prefer ones with overflow:hidden
-        // (typical media wrapper) or position:relative
-        if (!bestContainer) bestContainer = node;
-        // If this is a positioned container, prefer it
-        if (style.position !== "static" || style.overflow === "hidden") {
-          return node;
-        }
-      }
+      if (r.width >= 80 && r.height >= 80) return node;
       node = node.parentElement;
     }
-    return bestContainer || el.parentElement;
+    return el.parentElement;
   }
 
   // ── Overlay button ──
@@ -278,7 +279,9 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       if (isVideo) {
-        downloadVideo(mediaEl, btn);
+        // Find the actual <video> element if we attached to an img
+        const actualVideo = mediaEl.tagName === "VIDEO" ? mediaEl : findNearestVideo(mediaEl);
+        downloadVideo(actualVideo || mediaEl, btn);
       } else {
         downloadImage(mediaEl, btn);
       }
@@ -287,6 +290,7 @@
     wrap.appendChild(btn);
     container.appendChild(wrap);
 
+    // Hover behavior
     const show = () => wrap.classList.add(VISIBLE_CLASS);
     const hide = () => {
       setTimeout(() => {
@@ -303,6 +307,7 @@
     wrap.addEventListener("mouseenter", show);
     wrap.addEventListener("mouseleave", hide);
 
+    // Watch video src changes
     if (mediaEl.tagName === "VIDEO") {
       const srcObs = new MutationObserver(() => {
         const s = mediaEl.currentSrc || mediaEl.src || "";
@@ -316,13 +321,28 @@
       srcObs.observe(mediaEl, { attributes: true, attributeFilter: ["src"] });
     }
   }
+
+  // Find the nearest <video> element relative to an img
+  function findNearestVideo(img) {
+    let node = img;
+    for (let i = 0; i < 6 && node; i++) {
+      node = node.parentElement;
+      if (!node) break;
+      const v = node.querySelector("video");
+      if (v) return v;
+    }
+    return null;
+  }
+
   // ── Download: Image ──
   async function downloadImage(img, btn) {
     const prev = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
+
     let url = getBestImageUrl(img);
     if (!url) { showStatus(btn, prev, "No image found", 2000); return; }
+
     const filename = buildFilename("jpg");
     const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
     showStatus(btn, prev, resp?.ok ? `${ICON_CHECK}<span>Saved!</span>` : "<span>Failed</span>", 2500);
@@ -341,28 +361,41 @@
     return img.src || img.currentSrc || "";
   }
 
-  // ── Download: Video ──
+  // ── Download: Video (multi-strategy) ──
   async function downloadVideo(video, btn) {
     const prev = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = `${ICON_SPINNER}<span>Saving...</span>`;
+
     try {
       let url = "";
+
+      // Strategy 1: video src
       if (video.tagName === "VIDEO") url = getNonBlobSrc(video);
+
+      // Strategy 2: parent post data
       if (!url) url = findVideoUrlInPost(video);
+
+      // Strategy 3: SSR JSON
       if (!url) url = findVideoUrlFromScriptsNear(video);
+
+      // Strategy 4: network-captured
       if (!url) {
         const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
         const capturedUrls = captured?.urls || [];
         if (capturedUrls.length) url = capturedUrls[capturedUrls.length - 1];
       }
+
+      // Strategy 5: embed fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
         const embedUrls = embed?.videoUrls || [];
         if (embedUrls.length) url = embedUrls[0];
       }
+
       if (!url) { showStatus(btn, prev, "No video found", 2500); return; }
+
       const filename = buildFilename("mp4");
       const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
       showStatus(btn, prev, resp?.ok ? `${ICON_CHECK}<span>Saved!</span>` : "<span>Failed</span>", 2500);
