@@ -19,7 +19,7 @@
     extractVideoUrlsFromScripts();
     scheduleScan();
 
-    // MutationObserver: DOM structure changes (covers React/Virtual DOM re-renders)
+    // MutationObserver: DOM structure changes
     const obs = new MutationObserver(() => {
       if (location.href !== lastUrl) {
         onNavigate();
@@ -31,7 +31,7 @@
       subtree: true
     });
 
-    // History API: SPA navigation (pushState / replaceState)
+    // History API: SPA navigation
     const origPushState = history.pushState;
     const origReplaceState = history.replaceState;
     history.pushState = function (...args) {
@@ -45,14 +45,35 @@
       return result;
     };
 
-    // popstate: back/forward navigation
     window.addEventListener("popstate", () => {
       if (location.href !== lastUrl) onNavigate();
     });
 
-    // Fullscreen change: re-scan to attach buttons inside fullscreen container
-    document.addEventListener("fullscreenchange", () => scheduleScan());
-    document.addEventListener("webkitfullscreenchange", () => scheduleScan());
+    // Fullscreen: re-scan to inject buttons inside fullscreen container
+    document.addEventListener("fullscreenchange", () => {
+      // Small delay to let fullscreen element settle
+      setTimeout(() => {
+        rescanFullscreen();
+        scheduleScan();
+      }, 300);
+    });
+    document.addEventListener("webkitfullscreenchange", () => {
+      setTimeout(() => {
+        rescanFullscreen();
+        scheduleScan();
+      }, 300);
+    });
+  }
+
+  // Re-scan specifically inside fullscreen element
+  function rescanFullscreen() {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (!fsEl) return;
+    // Remove processed marks inside fullscreen so they get re-scanned
+    fsEl.querySelectorAll(`[${PROCESSED}]`).forEach((el) => {
+      el.removeAttribute(PROCESSED);
+    });
+    fsEl.querySelectorAll(`.${WRAP_CLASS}`).forEach((el) => el.remove());
   }
 
   function onNavigate() {
@@ -73,7 +94,7 @@
     });
   }
 
-  // ── SSR JSON parsing (video_versions / image_versions2) ──
+  // ── SSR JSON parsing ──
   function extractVideoUrlsFromScripts() {
     const media = [];
     for (const script of document.querySelectorAll('script[type="application/json"]')) {
@@ -104,7 +125,6 @@
     if (obj.image_versions2?.candidates) {
       const cands = obj.image_versions2.candidates;
       if (cands.length) {
-        // Pick highest resolution: sort by width descending
         const sorted = [...cands].sort((a, b) => (b.width || 0) - (a.width || 0));
         const best = sorted[0] || cands[0];
         if (best.url) {
@@ -122,7 +142,7 @@
     }
   }
 
-  // ── DOM scan: attach buttons on images & videos ──
+  // ── DOM scan ──
   function scheduleScan() {
     if (scanTimer) clearTimeout(scanTimer);
     scanTimer = setTimeout(() => {
@@ -132,52 +152,50 @@
   }
 
   function scan() {
-    // Videos — find proper container (NOT the video element itself)
-    for (const video of document.querySelectorAll("video")) {
+    // Determine if we're in fullscreen
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    const scanRoot = fsEl || document;
+
+    // Videos
+    for (const video of scanRoot.querySelectorAll("video")) {
       if (video.hasAttribute(PROCESSED)) continue;
       video.setAttribute(PROCESSED, "video");
-      const container = findVideoContainer(video);
+      const container = findMediaContainer(video);
       if (container) attachOverlay(container, video, "video");
     }
 
-    // Images – only large CDN images (skip avatars, icons)
-    for (const img of document.querySelectorAll("img")) {
+    // Images – only large CDN images
+    for (const img of scanRoot.querySelectorAll("img")) {
       if (img.hasAttribute(PROCESSED)) continue;
       const src = img.src || img.currentSrc || "";
       if (!src || !CDN_PATTERN.test(src)) continue;
       const rect = img.getBoundingClientRect();
-      if (rect.width < 100 || rect.height < 100) continue;
+      if (rect.width < 80 || rect.height < 80) continue;
       if (src.includes("/t51.2885-19/")) continue; // profile pic
 
       img.setAttribute(PROCESSED, "image");
-      const container = findImageContainer(img);
+      const container = findMediaContainer(img);
       if (container) attachOverlay(container, img, "image");
     }
   }
 
-  // Find a suitable parent container for the video button
-  // Video elements cannot have child divs, so we must go up to a positioned parent
-  function findVideoContainer(video) {
-    let node = video.parentElement;
+  // Unified container finder for both video and image
+  // Walks up to find a positioned parent that wraps the media
+  function findMediaContainer(el) {
+    let node = el.parentElement;
     for (let i = 0; i < 8 && node; i++) {
       const r = node.getBoundingClientRect();
-      // Find a container that roughly matches the video size
-      if (r.width >= 100 && r.height >= 80) {
+      if (r.width >= 80 && r.height >= 80) {
         return node;
       }
       node = node.parentElement;
     }
-    return video.parentElement;
+    return el.parentElement;
   }
 
-  function findImageContainer(img) {
-    let node = img.parentElement;
-    for (let i = 0; i < 8 && node; i++) {
-      const r = node.getBoundingClientRect();
-      if (r.width >= 100 && r.height >= 100) return node;
-      node = node.parentElement;
-    }
-    return img.parentElement;
+  // ── Detect if element is a video ──
+  function isVideoElement(el) {
+    return el.tagName === "VIDEO";
   }
 
   // ── Overlay button ──
@@ -190,7 +208,7 @@
     }
 
     const wrap = document.createElement("div");
-    wrap.className = WRAP_CLASS + (isVideo ? " tmd-video" : "");
+    wrap.className = WRAP_CLASS;
 
     const label = isVideo ? "Video" : "Photo";
     const icon = isVideo ? ICON_VIDEO_DL : ICON_IMG_DL;
@@ -214,7 +232,7 @@
     wrap.appendChild(btn);
     container.appendChild(wrap);
 
-    // JS-based hover: show on container or media hover
+    // JS-based hover
     const show = () => wrap.classList.add(VISIBLE_CLASS);
     const hide = () => {
       setTimeout(() => {

@@ -1,20 +1,13 @@
-/* ── Button wrapper ── */
+/* ── Button wrapper — always top-right of container ── */
 .tmd-wrap {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
+  right: 8px;
+  top: 8px;
   z-index: 2147483647;
   opacity: 0;
-  transform: translateY(4px);
+  transform: translateY(-2px);
   transition: opacity 180ms ease, transform 180ms ease;
   pointer-events: none;
-}
-
-/* Video button: top-right corner */
-.tmd-wrap.tmd-video {
-  right: 10px;
-  top: 10px;
-  bottom: auto;
 }
 
 /* Fully visible on hover */
@@ -38,9 +31,12 @@
 }
 
 /* ── Fullscreen support ── */
-*:fullscreen .tmd-wrap,
-*:-webkit-full-screen .tmd-wrap {
+:fullscreen .tmd-wrap,
+:-webkit-full-screen .tmd-wrap {
   z-index: 2147483647;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 /* ── Download button ── */
