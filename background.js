@@ -31,7 +31,8 @@ try {
 function classifyUrl(url) {
   // Skip tiny resources and profile pics
   if (url.includes("/t51.2885-19/")) return null; // profile pic path
-  if (url.includes("/v/t16/") || url.includes(".mp4")) return "videos";
+  if (url.includes("/v/t16/") || url.includes("/v/t2/") || url.includes("/o1/v/t") ||
+      url.includes(".mp4")) return "videos";
   // Large images from posts (not story stickers, not s150x150)
   if ((url.includes(".jpg") || url.includes(".webp")) && !url.includes("s150x150")) {
     return "images";
@@ -88,6 +89,8 @@ const handlers = {
     respond({
       ok: true,
       urls: tab ? [...tab.videos.keys()] : [],
+      // urlEntries: [{url, ts}] — lets content.js pick the freshest captured MP4
+      urlEntries: tab ? [...tab.videos.entries()].map(([url, ts]) => ({ url, ts })) : [],
       imageUrls: tab ? [...tab.images.keys()] : [],
       thumbnails: tab?.thumbnails || {}
     });
@@ -125,7 +128,7 @@ const handlers = {
     if (tabId && msg.urls?.length) {
       const tab = getTab(tabId);
       for (const url of msg.urls) {
-        if (url.includes(".mp4") || url.includes("/v/t16/")) {
+        if (url.includes(".mp4") || url.includes("/v/t16/") || url.includes("/v/t2/") || url.includes("/o1/v/t")) {
           tab.videos.set(url, Date.now());
         } else {
           tab.images.set(url, Date.now());
@@ -178,7 +181,20 @@ async function fetchEmbed(postUrl) {
   while ((m = re1.exec(html))) urls.push(decHtml(m[1]));
   const re2 = /<video[^>]+src="([^"]+)"/g;
   while ((m = re2.exec(html))) { const u = decHtml(m[1]); if (!urls.includes(u)) urls.push(u); }
-  return urls;
+  // JSON video_url field — embed HTML carries doubly-escaped JS JSON:
+  //   \"video_url\":\"https://...mp4?&token...\"
+  const re3 = /\\"video_url\\":\\"(https:(?:[^"\\]|\\[^"])*)\\"/g;
+  while ((m = re3.exec(html))) {
+    const u = m[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+    if (!urls.includes(u)) urls.push(u);
+  }
+  // Direct CDN .mp4 URLs as last resort (catches any structure)
+  const re4 = /https:\/\/[^\s"'<>\\]+\.mp4[^\s"'<>\\]*/g;
+  while ((m = re4.exec(html))) {
+    const u = decHtml(m[0]).split("\\")[0];
+    if (u.startsWith("https://") && !urls.includes(u)) urls.push(u);
+  }
+  return urls.filter(u => u.startsWith("https://") && (u.includes("cdninstagram") || u.includes("fbcdn")));
 }
 
 function decHtml(s) {

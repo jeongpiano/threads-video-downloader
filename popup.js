@@ -3,7 +3,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const status = document.getElementById("status");
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url?.includes("threads.com")) {
+  if (!tab?.url || !(tab.url.includes("threads.com") || tab.url.includes("threads.net"))) {
     status.textContent = "Threads 페이지에서 사용해주세요.";
     return;
   }
@@ -39,7 +39,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     const r = await chrome.runtime.sendMessage({ type: "GET_CAPTURED_URLS", tabId: tab.id });
     (r?.urls || []).forEach((u) => {
-      if (u.includes(".mp4") || u.includes("/v/t16/")) videoSet.add(u);
+      if ((u.includes(".mp4") || u.includes("/v/t16/") || u.includes("/v/t2/") || u.includes("/o1/v/t")) &&
+          !u.includes("bytestart") && !u.includes("-seg-")) videoSet.add(u);
     });
     (r?.imageUrls || []).forEach((u) => {
       if (!u.includes("/t51.2885-19/")) imageSet.add(u);

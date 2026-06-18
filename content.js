@@ -47,6 +47,12 @@
     // Fullscreen
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+
+    // SPA navigation fallback: Threads' pushState runs in the page's main world,
+    // which this isolated content script's history override cannot see — so forward
+    // navigation (clicking a post) was missed and buttons never re-attached.
+    // Polling location.href reliably catches it. (Fixes "사이트 변경시 새로고침 안됨".)
+    setInterval(() => { if (location.href !== lastUrl) onNavigate(); }, 400);
   }
 
   function onFullscreenChange() {
@@ -370,23 +376,27 @@
     try {
       let url = "";
 
-      // Strategy 1: video src
-      if (video.tagName === "VIDEO") url = getNonBlobSrc(video);
+      // Strategy A: direct (non-blob) src on the element
+      if (video && video.tagName === "VIDEO") url = getNonBlobSrc(video);
 
-      // Strategy 2: parent post data
-      if (!url) url = findVideoUrlInPost(video);
+      // Strategy B: nudge playback (click = user gesture) so Threads fetches the
+      //   progressive MP4, then read it from the network capture. Works for blob:/MSE
+      //   videos that have no URL in the DOM (the common case on Threads).
+      if (!url && video) url = await capturePlayingUrl(video);
 
-      // Strategy 3: SSR JSON
-      if (!url) url = findVideoUrlFromScriptsNear(video);
-
-      // Strategy 4: network-captured
+      // Strategy C: any full (non-range) CDN MP4 captured for this tab
       if (!url) {
         const captured = await sendMsg({ type: "GET_CAPTURED_URLS" });
-        const capturedUrls = captured?.urls || [];
-        if (capturedUrls.length) url = capturedUrls[capturedUrls.length - 1];
+        url = pickFullMp4(captured?.urlEntries || captured?.urls || [], 0);
       }
 
-      // Strategy 5: embed fallback
+      // Strategy D: SSR JSON near the post
+      if (!url && video) url = findVideoUrlFromScriptsNear(video);
+
+      // Strategy E: parent post data attributes
+      if (!url && video) url = findVideoUrlInPost(video);
+
+      // Strategy F: embed fallback
       if (!url) {
         const postUrl = location.href.split("?")[0];
         const embed = await sendMsg({ type: "FETCH_EMBED_VIDEOS", postUrl });
@@ -394,7 +404,7 @@
         if (embedUrls.length) url = embedUrls[0];
       }
 
-      if (!url) { showStatus(btn, prev, "No video found", 2500); return; }
+      if (!url) { showStatus(btn, prev, "<span>재생 후 다시 시도</span>", 3000); return; }
 
       const filename = buildFilename("mp4");
       const resp = await sendMsg({ type: "DOWNLOAD_MEDIA", url, filename });
@@ -432,6 +442,56 @@
       } catch {}
     }
     return "";
+  }
+
+  // Strip DASH/MSE range params so the URL downloads the FULL file. Keep every other
+  // query param — they form the CDN signature and the URL 403s without them.
+  function stripRange(u) {
+    return u.replace(/[&?](bytestart|byteend)=[^&]*/g, "").replace(/[?&]$/, "");
+  }
+
+  // Pick the best full (non-segment, non-range) CDN MP4. Accepts either {url, ts}
+  // entries or plain url strings; prefers the most recent at/after sinceTs.
+  function pickFullMp4(entries, sinceTs) {
+    const norm = (entries || []).map((e) => (typeof e === "string" ? { url: e, ts: 0 } : e));
+    const cdn = norm.filter((e) =>
+      e.url && (e.url.includes("cdninstagram") || e.url.includes("fbcdn")) &&
+      !e.url.includes("-seg-") && !e.url.includes("/range/")
+    );
+    if (!cdn.length) return "";
+    const fresh = sinceTs ? cdn.filter((e) => (e.ts || 0) >= sinceTs) : cdn;
+    const pool = fresh.length ? fresh : cdn;
+    pool.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return stripRange(pool[0].url);
+  }
+
+  // Briefly play (muted) inside the click gesture so Threads fetches the progressive
+  // MP4 over the network, then read the captured CDN URL. Restores prior state.
+  async function capturePlayingUrl(video) {
+    if (!video || video.tagName !== "VIDEO") return "";
+    const start = Date.now();
+    const wasPaused = video.paused;
+    const wasMuted = video.muted;
+    const at = video.currentTime;
+    try {
+      video.muted = true;
+      const p = video.play();
+      if (p && typeof p.then === "function") await p.catch(() => {});
+    } catch { /* play may reject — capture can still succeed from buffering */ }
+
+    let url = "";
+    for (let i = 0; i < 12 && !url; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+      const c = await sendMsg({ type: "GET_CAPTURED_URLS" });
+      url = pickFullMp4(c?.urlEntries || c?.urls || [], start - 500);
+    }
+
+    try {
+      if (wasPaused) video.pause();
+      video.muted = wasMuted;
+      if (Number.isFinite(at) && Math.abs(video.currentTime - at) > 0.3) video.currentTime = at;
+    } catch {}
+    return url;
   }
 
   function getNonBlobSrc(video) {
