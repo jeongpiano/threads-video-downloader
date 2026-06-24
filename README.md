@@ -1,3 +1,5 @@
+> ⚠️ **이 repo는 보존용입니다.** 통합 후속작 → https://github.com/jeongpiano/media-downloader (Instagram + Threads + 전 웹 + 스트림 스니퍼)
+
 # Threads Media Downloader
 
 Threads 게시물에서 **사진 + 동영상**을 다운로드하는 크롬 확장프로그램입니다.
